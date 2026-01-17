@@ -1,0 +1,73 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: tech-challenge-dev
+
+bases:
+  - ../../base
+
+nameSuffix: -dev
+
+commonLabels:
+  environment: development
+
+patches:
+  # Reduce replicas for dev
+  - target:
+      kind: Deployment
+      name: tech-challenge-app
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+  # Reduce HPA for dev
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: tech-challenge-app-hpa
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+
+  # Reduce MongoDB storage for dev
+  - target:
+      kind: StatefulSet
+      name: mongodb
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 5Gi
+
+  # Reduce resource quotas for dev
+  - target:
+      kind: ResourceQuota
+      name: tech-challenge-quota
+    patch: |-
+      - op: replace
+        path: /spec/hard/requests.cpu
+        value: "2"
+      - op: replace
+        path: /spec/hard/requests.memory
+        value: 4Gi
+      - op: replace
+        path: /spec/hard/limits.cpu
+        value: "4"
+      - op: replace
+        path: /spec/hard/limits.memory
+        value: 8Gi
+      - op: replace
+        path: /spec/hard/pods
+        value: "10"
+
+  # Update ingress host for dev
+  - target:
+      kind: Ingress
+      name: tech-challenge-ingress
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: dev.tech-challenge.example.com

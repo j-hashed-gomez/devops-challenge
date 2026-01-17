@@ -1,0 +1,33 @@
+import { Controller, Get } from '@nestjs/common';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
+
+@Controller('health')
+export class HealthController {
+  constructor(@InjectConnection() private connection: Connection) {}
+
+  @Get()
+  async check() {
+    const dbState = this.connection.readyState;
+    const isHealthy = dbState === 1; // 1 = connected
+
+    return {
+      status: isHealthy ? 'healthy' : 'unhealthy',
+      timestamp: new Date().toISOString(),
+      database: {
+        status: this.getConnectionStatus(dbState),
+        readyState: dbState,
+      },
+    };
+  }
+
+  private getConnectionStatus(state: number): string {
+    const states = {
+      0: 'disconnected',
+      1: 'connected',
+      2: 'connecting',
+      3: 'disconnecting',
+    };
+    return states[state] || 'unknown';
+  }
+}

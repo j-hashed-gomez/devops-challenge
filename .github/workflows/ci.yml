@@ -5,31 +5,9 @@ on:
     branches:
       - main
       - dev
-    paths:
-      - 'src/**'
-      - 'test/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tsconfig.json'
-      - 'nest-cli.json'
-      - '.eslintrc.js'
-      - 'Dockerfile'
-      - 'docker-compose.yml'
-      - '.github/workflows/ci.yml'
   push:
     branches:
       - dev
-    paths:
-      - 'src/**'
-      - 'test/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tsconfig.json'
-      - 'nest-cli.json'
-      - '.eslintrc.js'
-      - 'Dockerfile'
-      - 'docker-compose.yml'
-      - '.github/workflows/ci.yml'
 
 jobs:
   lint-and-test:

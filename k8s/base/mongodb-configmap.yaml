@@ -6,12 +6,5 @@ metadata:
 data:
   mongo-init.js: |
     db = db.getSiblingDB('tech_challenge');
-
     db.createCollection('visits');
-
-    db.visits.insertOne({
-      timestamp: new Date(),
-      message: 'Database initialized successfully'
-    });
-
-    print('Database tech_challenge initialized with visits collection');
+    print('Database and collection created successfully');

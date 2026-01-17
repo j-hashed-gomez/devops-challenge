@@ -5,13 +5,17 @@ namespace: tech-challenge
 
 resources:
   - namespace.yaml
-  - mongodb-secret.yaml
   - mongodb-configmap.yaml
+  - mongodb-secret.yaml
   - mongodb-statefulset.yaml
+  - mongodb-service.yaml
   - app-deployment.yaml
   - app-service.yaml
+  - app-hpa.yaml
   - ingress.yaml
   - network-policy.yaml
+  - poddisruptionbudget.yaml
+  - resourcequota.yaml
 
 commonLabels:
   project: tech-challenge

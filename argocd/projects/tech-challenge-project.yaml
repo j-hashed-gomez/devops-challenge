@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tech-challenge
+  namespace: argocd
+spec:
+  description: Tech Challenge Application Project
+
+  # Source repositories
+  sourceRepos:
+  - https://github.com/j-hashed-gomez/devops-challenge.git
+  - https://github.com/j-hashed-gomez/devops-challenge  # Without .git
+
+  # Allowed destinations
+  destinations:
+  - namespace: tech-challenge
+    server: https://kubernetes.default.svc
+  - namespace: tech-challenge-dev
+    server: https://kubernetes.default.svc
+  - namespace: tech-challenge-staging
+    server: https://kubernetes.default.svc
+  - namespace: monitoring
+    server: https://kubernetes.default.svc
+  - namespace: logging
+    server: https://kubernetes.default.svc
+
+  # Allowed cluster resources
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'
+
+  # Namespace resources
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'
+
+  # Orphaned resources
+  orphanedResources:
+    warn: true

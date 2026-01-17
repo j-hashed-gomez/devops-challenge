@@ -6,17 +6,6 @@ on:
       - main
     tags-ignore:
       - 'v*.*.*'
-    paths:
-      - 'src/**'
-      - 'test/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tsconfig.json'
-      - 'nest-cli.json'
-      - '.eslintrc.js'
-      - 'Dockerfile'
-      - 'docker-compose.yml'
-      - '.github/workflows/build-main.yml'
 
 env:
   REGISTRY: ghcr.io

@@ -8,40 +8,34 @@ spec:
     matchLabels:
       app: tech-challenge-app
   policyTypes:
-    - Ingress
-    - Egress
+  - Ingress
+  - Egress
   ingress:
-    # Allow traffic from ingress controller
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              name: kube-system
-      ports:
-        - protocol: TCP
-          port: 3000
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: traefik
+    ports:
+    - protocol: TCP
+      port: 3000
   egress:
-    # Allow DNS resolution
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              name: kube-system
-      ports:
-        - protocol: UDP
-          port: 53
-    # Allow connection to MongoDB
-    - to:
-        - podSelector:
-            matchLabels:
-              app: mongodb
-      ports:
-        - protocol: TCP
-          port: 27017
-    # Allow HTTPS for external APIs (if needed)
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - protocol: TCP
-          port: 443
+  - to:
+    - podSelector:
+        matchLabels:
+          app: mongodb
+    ports:
+    - protocol: TCP
+      port: 27017
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -53,23 +47,24 @@ spec:
     matchLabels:
       app: mongodb
   policyTypes:
-    - Ingress
-    - Egress
+  - Ingress
+  - Egress
   ingress:
-    # Only allow traffic from app pods
-    - from:
-        - podSelector:
-            matchLabels:
-              app: tech-challenge-app
-      ports:
-        - protocol: TCP
-          port: 27017
+  - from:
+    - podSelector:
+        matchLabels:
+          app: tech-challenge-app
+    ports:
+    - protocol: TCP
+      port: 27017
   egress:
-    # Allow DNS resolution
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              name: kube-system
-      ports:
-        - protocol: UDP
-          port: 53
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53

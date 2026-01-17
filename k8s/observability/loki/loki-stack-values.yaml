@@ -1,0 +1,245 @@
+# Helm values for Loki Stack (Lightweight alternative to ELK)
+# Install with: helm install loki grafana/loki-stack -f loki-stack-values.yaml -n logging --create-namespace
+
+# Loki configuration
+loki:
+  enabled: true
+
+  # Persistence
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 50Gi
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # Loki configuration
+  config:
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+
+    # Ingester configuration
+    ingester:
+      lifecycler:
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+      chunk_idle_period: 5m
+      chunk_retain_period: 30s
+      max_transfer_retries: 0
+      wal:
+        enabled: true
+        dir: /loki/wal
+
+    # Schema configuration
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: boltdb-shipper
+          object_store: filesystem
+          schema: v11
+          index:
+            prefix: index_
+            period: 24h
+
+    # Storage configuration
+    storage_config:
+      boltdb_shipper:
+        active_index_directory: /loki/boltdb-shipper-active
+        cache_location: /loki/boltdb-shipper-cache
+        cache_ttl: 24h
+        shared_store: filesystem
+      filesystem:
+        directory: /loki/chunks
+
+    # Compactor for log retention and cleanup
+    compactor:
+      working_directory: /loki/compactor
+      shared_store: filesystem
+      compaction_interval: 10m
+      retention_enabled: true
+      retention_delete_delay: 2h
+      retention_delete_worker_count: 150
+
+    # Limits configuration
+    limits_config:
+      enforce_metric_name: false
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h  # 7 days
+      ingestion_rate_mb: 10
+      ingestion_burst_size_mb: 20
+      max_query_series: 100000
+      max_query_parallelism: 32
+      retention_period: 720h  # 30 days
+
+    # Chunk store configuration
+    chunk_store_config:
+      max_look_back_period: 720h  # 30 days
+
+    # Table manager (for retention)
+    table_manager:
+      retention_deletes_enabled: true
+      retention_period: 720h  # 30 days
+
+    # Query frontend
+    query_scheduler:
+      max_outstanding_requests_per_tenant: 256
+
+    frontend:
+      compress_responses: true
+      max_outstanding_per_tenant: 256
+
+  # Service type
+  service:
+    type: ClusterIP
+    port: 3100
+
+# Promtail configuration (log collector)
+promtail:
+  enabled: true
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  # Promtail configuration
+  config:
+    # Server configuration
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+
+    # Position tracking
+    positions:
+      filename: /tmp/positions.yaml
+
+    # Loki client
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+        tenant_id: 1
+
+    # Scrape configuration
+    scrape_configs:
+      # Kubernetes pods
+      - job_name: kubernetes-pods
+        pipeline_stages:
+          - cri: {}
+          - json:
+              expressions:
+                timestamp: timestamp
+                level: level
+                message: message
+          - timestamp:
+              source: timestamp
+              format: RFC3339Nano
+          - labels:
+              level:
+          - output:
+              source: message
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          # Only scrape local pods
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: __host__
+            action: replace
+
+          # Add namespace label
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+            action: replace
+
+          # Add pod name label
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+            action: replace
+
+          # Add container name label
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+            action: replace
+
+          # Add app label
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+            action: replace
+
+          # Set log path
+          - source_labels: [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_container_name]
+            target_label: __path__
+            separator: /
+            replacement: /var/log/pods/*$1/*.log
+
+          # Drop logs from excluded namespaces
+          - source_labels: [__meta_kubernetes_namespace]
+            action: drop
+            regex: (kube-system|kube-public|kube-node-lease)
+
+  # Mount host log directories
+  volumeMounts:
+    - name: varlog
+      mountPath: /var/log
+      readOnly: true
+    - name: varlibdockercontainers
+      mountPath: /var/lib/docker/containers
+      readOnly: true
+
+  volumes:
+    - name: varlog
+      hostPath:
+        path: /var/log
+    - name: varlibdockercontainers
+      hostPath:
+        path: /var/lib/docker/containers
+
+  # Service account
+  serviceAccount:
+    create: true
+
+  # Security context
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+    fsGroup: 0
+
+# Grafana datasource (auto-configure Loki in Grafana)
+grafana:
+  enabled: false  # Use existing Grafana from kube-prometheus-stack
+
+  # If enabling standalone Grafana:
+  # persistence:
+  #   enabled: true
+  #   storageClassName: gp3
+  #   size: 10Gi
+  #
+  # sidecar:
+  #   datasources:
+  #     enabled: true
+  #     defaultDatasourceEnabled: true
+
+# Fluent Bit (alternative to Promtail, more lightweight)
+fluent-bit:
+  enabled: false  # Disable, using Promtail
+
+# Service monitors for Prometheus integration
+serviceMonitor:
+  enabled: true
+  labels:
+    prometheus: enabled
+  interval: 30s

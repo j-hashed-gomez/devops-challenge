@@ -1,5 +1,3 @@
-# VPC Module - Network infrastructure for EKS cluster
-
 data "aws_availability_zones" "available" {
   state = "available"
 }
@@ -14,12 +12,11 @@ resource "aws_vpc" "main" {
   enable_dns_support   = true
 
   tags = {
-    Name = "${var.cluster_name}-vpc"
+    Name                                        = "${var.cluster_name}-vpc"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 }
 
-# Internet Gateway for public subnet connectivity
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
@@ -28,9 +25,8 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
-# Public Subnets - for load balancers and NAT gateways
 resource "aws_subnet" "public" {
-  count = length(local.azs)
+  count = 3
 
   vpc_id                  = aws_vpc.main.id
   cidr_block              = cidrsubnet(var.vpc_cidr, 4, count.index)
@@ -38,30 +34,28 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "${var.cluster_name}-public-${local.azs[count.index]}"
+    Name                                        = "${var.cluster_name}-public-${local.azs[count.index]}"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
     "kubernetes.io/role/elb"                    = "1"
   }
 }
 
-# Private Subnets - for EKS worker nodes
 resource "aws_subnet" "private" {
-  count = length(local.azs)
+  count = 3
 
   vpc_id            = aws_vpc.main.id
-  cidr_block        = cidrsubnet(var.vpc_cidr, 4, count.index + length(local.azs))
+  cidr_block        = cidrsubnet(var.vpc_cidr, 4, count.index + 3)
   availability_zone = local.azs[count.index]
 
   tags = {
-    Name = "${var.cluster_name}-private-${local.azs[count.index]}"
+    Name                                        = "${var.cluster_name}-private-${local.azs[count.index]}"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
     "kubernetes.io/role/internal-elb"           = "1"
   }
 }
 
-# Elastic IPs for NAT Gateways
 resource "aws_eip" "nat" {
-  count  = length(local.azs)
+  count  = 3
   domain = "vpc"
 
   tags = {
@@ -71,9 +65,8 @@ resource "aws_eip" "nat" {
   depends_on = [aws_internet_gateway.main]
 }
 
-# NAT Gateways for private subnet internet access
 resource "aws_nat_gateway" "main" {
-  count = length(local.azs)
+  count = 3
 
   allocation_id = aws_eip.nat[count.index].id
   subnet_id     = aws_subnet.public[count.index].id
@@ -85,7 +78,6 @@ resource "aws_nat_gateway" "main" {
   depends_on = [aws_internet_gateway.main]
 }
 
-# Route table for public subnets
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -99,17 +91,8 @@ resource "aws_route_table" "public" {
   }
 }
 
-# Route table associations for public subnets
-resource "aws_route_table_association" "public" {
-  count = length(aws_subnet.public)
-
-  subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
-}
-
-# Route tables for private subnets (one per AZ)
 resource "aws_route_table" "private" {
-  count = length(local.azs)
+  count = 3
 
   vpc_id = aws_vpc.main.id
 
@@ -123,9 +106,15 @@ resource "aws_route_table" "private" {
   }
 }
 
-# Route table associations for private subnets
+resource "aws_route_table_association" "public" {
+  count = 3
+
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
 resource "aws_route_table_association" "private" {
-  count = length(aws_subnet.private)
+  count = 3
 
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[count.index].id

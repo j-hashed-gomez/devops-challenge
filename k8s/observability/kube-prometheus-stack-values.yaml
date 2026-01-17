@@ -1,27 +1,51 @@
-# Helm values for kube-prometheus-stack
-# Install with: helm install prometheus prometheus-community/kube-prometheus-stack -f kube-prometheus-stack-values.yaml -n monitoring --create-namespace
+grafana:
+  enabled: true
+  adminPassword: admin
 
-# Global settings
-fullnameOverride: prometheus
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 10Gi
 
-# Prometheus configuration
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+
+  dashboards:
+    default:
+      tech-challenge:
+        json: |
+          {
+            "dashboard": {
+              "title": "Tech Challenge Dashboard",
+              "panels": []
+            }
+          }
+
 prometheus:
   enabled: true
+
   prometheusSpec:
-    # Retention and storage
     retention: 15d
-    retentionSize: "10GB"
+    retentionSize: "18GB"
 
-    # Resource limits
-    resources:
-      requests:
-        cpu: 200m
-        memory: 512Mi
-      limits:
-        cpu: 1000m
-        memory: 2Gi
-
-    # Storage
     storageSpec:
       volumeClaimTemplate:
         spec:
@@ -31,124 +55,40 @@ prometheus:
             requests:
               storage: 20Gi
 
-    # Service monitors selector
-    serviceMonitorSelector:
-      matchLabels:
-        prometheus: enabled
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
 
-    # Pod monitors selector
-    podMonitorSelector:
-      matchLabels:
-        prometheus: enabled
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
 
-    # Additional scrape configs
-    additionalScrapeConfigs: []
+    additionalScrapeConfigs:
+    - job_name: 'tech-challenge-app'
+      kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+          - tech-challenge
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: tech-challenge-app
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        action: keep
+        regex: "3000"
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
 
-  # Ingress for Prometheus UI
-  ingress:
-    enabled: true
-    ingressClassName: alb
-    annotations:
-      alb.ingress.kubernetes.io/scheme: internet-facing
-      alb.ingress.kubernetes.io/target-type: ip
-      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
-      # Add authentication in production
-      # alb.ingress.kubernetes.io/auth-type: cognito
-    hosts:
-      - prometheus.example.com
-    paths:
-      - /
-
-# Grafana configuration
-grafana:
-  enabled: true
-
-  # Admin credentials
-  adminPassword: CHANGE_ME_IN_PRODUCTION
-
-  # Resource limits
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
-
-  # Persistence
-  persistence:
-    enabled: true
-    storageClassName: gp3
-    size: 10Gi
-
-  # Ingress for Grafana UI
-  ingress:
-    enabled: true
-    ingressClassName: alb
-    annotations:
-      alb.ingress.kubernetes.io/scheme: internet-facing
-      alb.ingress.kubernetes.io/target-type: ip
-      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
-    hosts:
-      - grafana.example.com
-    path: /
-
-  # Data sources
-  datasources:
-    datasources.yaml:
-      apiVersion: 1
-      datasources:
-        - name: Prometheus
-          type: prometheus
-          url: http://prometheus-kube-prometheus-prometheus:9090
-          access: proxy
-          isDefault: true
-
-  # Dashboard providers
-  dashboardProviders:
-    dashboardproviders.yaml:
-      apiVersion: 1
-      providers:
-        - name: 'default'
-          orgId: 1
-          folder: ''
-          type: file
-          disableDeletion: false
-          editable: true
-          options:
-            path: /var/lib/grafana/dashboards/default
-
-  # Import default dashboards
-  dashboards:
-    default:
-      kubernetes-cluster:
-        gnetId: 7249
-        revision: 1
-        datasource: Prometheus
-      kubernetes-pods:
-        gnetId: 6417
-        revision: 1
-        datasource: Prometheus
-      node-exporter:
-        gnetId: 1860
-        revision: 27
-        datasource: Prometheus
-
-# AlertManager configuration
 alertmanager:
   enabled: true
 
   alertmanagerSpec:
-    # Resource limits
-    resources:
-      requests:
-        cpu: 50m
-        memory: 128Mi
-      limits:
-        cpu: 200m
-        memory: 256Mi
-
-    # Storage
     storage:
       volumeClaimTemplate:
         spec:
@@ -158,43 +98,15 @@ alertmanager:
             requests:
               storage: 5Gi
 
-  # AlertManager configuration
-  config:
-    global:
-      resolve_timeout: 5m
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
 
-    route:
-      group_by: ['alertname', 'cluster', 'service']
-      group_wait: 10s
-      group_interval: 10s
-      repeat_interval: 12h
-      receiver: 'null'
-      routes:
-        - match:
-            alertname: Watchdog
-          receiver: 'null'
-        - match:
-            severity: critical
-          receiver: 'critical'
-        - match:
-            severity: warning
-          receiver: 'warning'
-
-    receivers:
-      - name: 'null'
-      - name: 'critical'
-        # Configure Slack, PagerDuty, email, etc.
-        # slack_configs:
-        #   - api_url: 'https://hooks.slack.com/services/XXX'
-        #     channel: '#alerts-critical'
-      - name: 'warning'
-        # slack_configs:
-        #   - api_url: 'https://hooks.slack.com/services/XXX'
-        #     channel: '#alerts-warning'
-
-# Prometheus Operator
 prometheusOperator:
-  enabled: true
   resources:
     requests:
       cpu: 100m
@@ -203,34 +115,31 @@ prometheusOperator:
       cpu: 200m
       memory: 256Mi
 
-# Node Exporter
-nodeExporter:
-  enabled: true
-
-# Kube State Metrics
 kubeStateMetrics:
   enabled: true
 
-# Default rules
+nodeExporter:
+  enabled: true
+
 defaultRules:
   create: true
   rules:
     alertmanager: true
-    etcd: false
+    etcd: true
     configReloaders: true
     general: true
     k8s: true
     kubeApiserverAvailability: true
     kubeApiserverSlos: true
     kubelet: true
-    kubeProxy: false
+    kubeProxy: true
     kubePrometheusGeneral: true
     kubePrometheusNodeRecording: true
     kubernetesApps: true
     kubernetesResources: true
     kubernetesStorage: true
     kubernetesSystem: true
-    kubeScheduler: false
+    kubeScheduler: true
     kubeStateMetrics: true
     network: true
     node: true

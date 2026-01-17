@@ -4,22 +4,17 @@ variable "cluster_name" {
 }
 
 variable "cluster_version" {
-  description = "Kubernetes version to use for the EKS cluster"
+  description = "Kubernetes version"
   type        = string
 }
 
 variable "vpc_id" {
-  description = "VPC ID where the cluster will be created"
+  description = "VPC ID"
   type        = string
 }
 
 variable "private_subnet_ids" {
-  description = "List of private subnet IDs for the EKS cluster"
-  type        = list(string)
-}
-
-variable "public_subnet_ids" {
-  description = "List of public subnet IDs for the EKS cluster"
+  description = "List of private subnet IDs"
   type        = list(string)
 }
 
@@ -41,4 +36,9 @@ variable "node_min_size" {
 variable "node_max_size" {
   description = "Maximum number of worker nodes"
   type        = number
+}
+
+variable "environment" {
+  description = "Environment name"
+  type        = string
 }
