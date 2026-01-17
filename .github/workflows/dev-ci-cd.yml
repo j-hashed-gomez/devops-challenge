@@ -1,9 +1,11 @@
-name: Dev CI/CD with Auto-merge
+name: CI/CD Pipeline
 
 on:
   push:
     branches:
       - dev
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       deploy_to_production:
@@ -284,6 +286,8 @@ jobs:
       needs.security-scan.outputs.has-vulnerabilities == 'false'
     permissions:
       contents: write
+    outputs:
+      new-sha: ${{ steps.merge.outputs.sha }}
 
     steps:
       - name: Checkout dev branch
@@ -298,10 +302,23 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Merge dev to main
+        id: merge
         run: |
           git fetch origin main:main
           git checkout main
-          git merge dev --no-ff -m "Auto-merge dev to main - All quality checks passed
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            git merge dev --no-ff -m "Auto-merge dev to main - Release ${{ github.ref_name }}
+
+          This automated merge was triggered for release tag ${{ github.ref_name }} after successful:
+          - Code quality checks (lint, tests, e2e)
+          - Docker image build
+          - Security scan (Trivy)
+
+          Original commit: ${{ github.sha }}
+          Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            git merge dev --no-ff -m "Auto-merge dev to main - All quality checks passed
 
           This automated merge was triggered after successful:
           - Code quality checks (lint, tests, e2e)
@@ -310,9 +327,24 @@ jobs:
 
           Commit: ${{ github.sha }}
           Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
       - name: Push to main
         run: git push origin main
+
+      - name: Move tag to main (if tag push)
+        if: github.ref_type == 'tag'
+        run: |
+          # Delete tag from remote
+          git push origin :refs/tags/${{ github.ref_name }} || true
+
+          # Create tag on the new merge commit in main
+          git tag -f ${{ github.ref_name }}
+
+          # Push tag to new location
+          git push origin ${{ github.ref_name }}
 
   push-image:
     name: Push to Registry
@@ -340,14 +372,122 @@ jobs:
 
       - name: Tag and push image
         run: |
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          BASE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }}"
 
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ github.sha }}
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # Semantic version tagging for releases
+            VERSION="${{ github.ref_name }}"
+            VERSION_NO_V="${VERSION#v}"  # Remove 'v' prefix
 
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ github.sha }}
+            # Extract version parts (e.g., v1.2.3 -> 1, 1.2, 1.2.3)
+            MAJOR=$(echo $VERSION_NO_V | cut -d. -f1)
+            MINOR=$(echo $VERSION_NO_V | cut -d. -f2)
+            PATCH=$(echo $VERSION_NO_V | cut -d. -f3)
+
+            # Tag with full version
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_NO_V}
+
+            # Tag with major.minor
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}
+
+            # Tag with major only
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}
+
+            # Tag as latest
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # Push all tags
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_NO_V}
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          else
+            # Branch push: tag as latest and main-sha
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ needs.auto-merge-to-main.outputs.new-sha }}
+
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ needs.auto-merge-to-main.outputs.new-sha }}
+          fi
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: push-image
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ github.ref_name }}"
+
+          # Get previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${VERSION}^ 2>/dev/null || echo "")
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            COMMITS=$(git log ${PREVIOUS_TAG}..${VERSION} --pretty=format:"- %s (%h)" --no-merges)
+          else
+            COMMITS=$(git log ${VERSION} --pretty=format:"- %s (%h)" --no-merges | head -20)
+          fi
+
+          cat > release_notes.md <<EOF
+          ## Release ${VERSION}
+
+          ### Docker Images
+
+          \`\`\`
+          docker pull ghcr.io/${{ github.repository }}:${VERSION}
+          docker pull ghcr.io/${{ github.repository }}:latest
+          \`\`\`
+
+          ### Changes
+
+          ${COMMITS}
+
+          ### Validation
+
+          This release passed all quality gates:
+          - ✅ Code linting
+          - ✅ Unit tests
+          - ✅ E2E tests
+          - ✅ Security scan (Trivy)
+          - ✅ Docker image build
+
+          ### Artifacts
+
+          - Docker images available in GitHub Container Registry
+          - Tagged as: \`${VERSION}\`, \`${VERSION#v}\`, major, major.minor, \`latest\`
+          EOF
+
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const releaseNotes = fs.readFileSync('release_notes.md', 'utf8');
+
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: '${{ github.ref_name }}',
+              name: 'Release ${{ github.ref_name }}',
+              body: releaseNotes,
+              draft: false,
+              prerelease: false
+            });
 
   deploy-to-production:
     name: Deploy to Production (ArgoCD)
