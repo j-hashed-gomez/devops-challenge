@@ -178,7 +178,8 @@ jobs:
   push-image:
     name: Push to Registry
     runs-on: ubuntu-latest
-    needs: security-scan
+    needs: [security-scan, report-failures]
+    if: needs.report-failures.outputs.has-errors != 'true'
     permissions:
       contents: read
       packages: write
@@ -229,6 +230,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [quality-checks, build-image, security-scan]
     if: always()
+    outputs:
+      has-errors: ${{ steps.check-errors.outputs.has-errors }}
     permissions:
       issues: write
 
@@ -245,7 +248,27 @@ jobs:
           name: trivy-output
         continue-on-error: true
 
+      - name: Check for errors
+        id: check-errors
+        run: |
+          # Read outputs
+          LINT_OUTPUT=$(cat lint-output.txt 2>/dev/null || echo "")
+          TEST_OUTPUT=$(cat test-output.txt 2>/dev/null || echo "")
+          E2E_OUTPUT=$(cat e2e-output.txt 2>/dev/null || echo "")
+          TRIVY_OUTPUT=$(cat trivy-output.txt 2>/dev/null || echo "")
+
+          # Detect if there are actual errors
+          HAS_ERRORS="false"
+          if echo "$LINT_OUTPUT" | grep -qE "(error|✖)"; then HAS_ERRORS="true"; fi
+          if echo "$TEST_OUTPUT" | grep -qE "(FAIL|failed)"; then HAS_ERRORS="true"; fi
+          if echo "$E2E_OUTPUT" | grep -qE "(FAIL|failed)"; then HAS_ERRORS="true"; fi
+          if echo "$TRIVY_OUTPUT" | grep -qE "(CRITICAL|HIGH)"; then HAS_ERRORS="true"; fi
+
+          echo "has-errors=$HAS_ERRORS" >> $GITHUB_OUTPUT
+          echo "Has errors: $HAS_ERRORS"
+
       - name: Create or update issue
+        if: steps.check-errors.outputs.has-errors == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -262,19 +285,11 @@ jobs:
             try { e2eOutput = fs.readFileSync('e2e-output.txt', 'utf8'); } catch(e) {}
             try { trivyOutput = fs.readFileSync('trivy-output.txt', 'utf8'); } catch(e) {}
 
-            // Detect if there are actual errors in the outputs
+            // Detect which specific checks failed
             const hasLintErrors = lintOutput.includes('error') || lintOutput.includes('✖');
             const hasTestErrors = testOutput.includes('FAIL') || testOutput.includes('failed');
             const hasE2EErrors = e2eOutput.includes('FAIL') || e2eOutput.includes('failed');
             const hasTrivyErrors = trivyOutput.includes('CRITICAL') || trivyOutput.includes('HIGH');
-
-            const hasAnyErrors = hasLintErrors || hasTestErrors || hasE2EErrors || hasTrivyErrors;
-
-            // Only create issue if there are actual errors
-            if (!hasAnyErrors) {
-              console.log('No errors detected, skipping issue creation');
-              return;
-            }
 
             // Build issue body
             let issueBody = `## CI/CD Pipeline Failures\n\n`;
