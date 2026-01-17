@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tech-challenge-app
+  namespace: tech-challenge
+  labels:
+    app: tech-challenge-app
+    prometheus: enabled
+spec:
+  selector:
+    matchLabels:
+      app: tech-challenge-app
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - tech-challenge

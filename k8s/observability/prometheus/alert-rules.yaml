@@ -1,0 +1,183 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tech-challenge-alerts
+  namespace: monitoring
+  labels:
+    prometheus: kube-prometheus
+spec:
+  groups:
+    - name: tech-challenge.application
+      interval: 30s
+      rules:
+        # High error rate alert
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{namespace="tech-challenge",status=~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{namespace="tech-challenge"}[5m]))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+            component: application
+          annotations:
+            summary: "High error rate detected"
+            description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+        # High request latency alert
+        - alert: HighRequestLatency
+          expr: |
+            histogram_quantile(0.95,
+              rate(http_request_duration_seconds_bucket{namespace="tech-challenge"}[5m])
+            ) > 1
+          for: 5m
+          labels:
+            severity: warning
+            component: application
+          annotations:
+            summary: "High request latency detected"
+            description: "95th percentile latency is {{ $value }}s (threshold: 1s)"
+
+        # Pod down alert
+        - alert: PodDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="tech-challenge",deployment="tech-challenge-app"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: application
+          annotations:
+            summary: "Application pods are down"
+            description: "No healthy application pods available"
+
+        # Pod restart rate alert
+        - alert: HighPodRestartRate
+          expr: |
+            rate(kube_pod_container_status_restarts_total{namespace="tech-challenge"}[15m]) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            component: application
+          annotations:
+            summary: "High pod restart rate detected"
+            description: "Pod {{ $labels.pod }} is restarting frequently"
+
+    - name: tech-challenge.mongodb
+      interval: 30s
+      rules:
+        # MongoDB down alert
+        - alert: MongoDBDown
+          expr: |
+            mongodb_up{namespace="tech-challenge"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            component: database
+          annotations:
+            summary: "MongoDB is down"
+            description: "MongoDB instance is not responding"
+
+        # High MongoDB connections alert
+        - alert: HighMongoDBConnections
+          expr: |
+            mongodb_connections{namespace="tech-challenge",state="current"} > 80
+          for: 5m
+          labels:
+            severity: warning
+            component: database
+          annotations:
+            summary: "High number of MongoDB connections"
+            description: "Current connections: {{ $value }} (threshold: 80)"
+
+        # MongoDB replication lag (for replica sets)
+        - alert: MongoDBReplicationLag
+          expr: |
+            mongodb_replset_member_replication_lag{namespace="tech-challenge"} > 10
+          for: 5m
+          labels:
+            severity: warning
+            component: database
+          annotations:
+            summary: "MongoDB replication lag detected"
+            description: "Replication lag is {{ $value }}s (threshold: 10s)"
+
+    - name: tech-challenge.resources
+      interval: 30s
+      rules:
+        # High memory usage alert
+        - alert: HighMemoryUsage
+          expr: |
+            (
+              container_memory_working_set_bytes{namespace="tech-challenge",container!=""}
+              /
+              container_spec_memory_limit_bytes{namespace="tech-challenge",container!=""}
+            ) > 0.9
+          for: 5m
+          labels:
+            severity: warning
+            component: resources
+          annotations:
+            summary: "High memory usage detected"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of memory limit"
+
+        # High CPU usage alert
+        - alert: HighCPUUsage
+          expr: |
+            (
+              rate(container_cpu_usage_seconds_total{namespace="tech-challenge",container!=""}[5m])
+              /
+              container_spec_cpu_quota{namespace="tech-challenge",container!=""}
+              * 100000
+            ) > 0.8
+          for: 5m
+          labels:
+            severity: warning
+            component: resources
+          annotations:
+            summary: "High CPU usage detected"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of CPU limit"
+
+        # PVC almost full alert
+        - alert: PVCAlmostFull
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes{namespace="tech-challenge"}
+              /
+              kubelet_volume_stats_capacity_bytes{namespace="tech-challenge"}
+            ) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+            component: storage
+          annotations:
+            summary: "Persistent volume almost full"
+            description: "PVC {{ $labels.persistentvolumeclaim }} is {{ $value | humanizePercentage }} full"
+
+    - name: tech-challenge.availability
+      interval: 30s
+      rules:
+        # Service availability alert
+        - alert: ServiceUnavailable
+          expr: |
+            up{job="tech-challenge-app"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: availability
+          annotations:
+            summary: "Service is unavailable"
+            description: "Service {{ $labels.job }} is not responding to health checks"
+
+        # Probe failures alert
+        - alert: ProbeFailures
+          expr: |
+            sum by (pod) (kube_pod_container_status_ready{namespace="tech-challenge"}) == 0
+          for: 5m
+          labels:
+            severity: warning
+            component: availability
+          annotations:
+            summary: "Pod readiness probe failing"
+            description: "Pod {{ $labels.pod }} is failing readiness probes"
