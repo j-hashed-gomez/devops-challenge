@@ -154,6 +154,8 @@ jobs:
     needs: build-image
     permissions:
       security-events: write
+    outputs:
+      trivy-failed: ${{ steps.trivy.outputs.exit_code }}
 
     steps:
       - name: Checkout code
@@ -177,19 +179,36 @@ jobs:
             type=sha,prefix=main-,format=short
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '1'
+        id: trivy
+        continue-on-error: true
+        shell: bash {0}
+        run: |
+          set +e
+          trivy image --format sarif --output trivy-results.sarif --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt
+          TRIVY_EXIT=$?
+          echo "exit_code=$TRIVY_EXIT" >> $GITHUB_OUTPUT
+          exit 0
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
+
+      - name: Upload Trivy output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-output
+          path: trivy-output.txt
+          retention-days: 7
+
+      - name: Check security gate
+        if: steps.trivy.outputs.exit_code != '0'
+        run: |
+          echo "::error::Security vulnerabilities found"
+          echo "Trivy exit code: ${{ steps.trivy.outputs.exit_code }}"
+          exit 1
 
   push-image:
     name: Push to Registry
@@ -243,16 +262,25 @@ jobs:
   report-failures:
     name: Report CI/CD Failures
     runs-on: ubuntu-latest
-    needs: quality-checks
-    if: failure() && needs.quality-checks.result == 'failure'
+    needs: [quality-checks, build-image, security-scan]
+    if: always() && (needs.quality-checks.result == 'failure' || needs.security-scan.result == 'failure')
     permissions:
       issues: write
 
     steps:
       - name: Download test outputs
+        if: needs.quality-checks.result == 'failure'
         uses: actions/download-artifact@v4
         with:
           name: test-outputs
+        continue-on-error: true
+
+      - name: Download Trivy output
+        if: needs.security-scan.result == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-output
+        continue-on-error: true
 
       - name: Create or update issue
         uses: actions/github-script@v7
@@ -264,10 +292,12 @@ jobs:
             let lintOutput = '';
             let testOutput = '';
             let e2eOutput = '';
+            let trivyOutput = '';
 
             try { lintOutput = fs.readFileSync('lint-output.txt', 'utf8'); } catch(e) {}
             try { testOutput = fs.readFileSync('test-output.txt', 'utf8'); } catch(e) {}
             try { e2eOutput = fs.readFileSync('e2e-output.txt', 'utf8'); } catch(e) {}
+            try { trivyOutput = fs.readFileSync('trivy-output.txt', 'utf8'); } catch(e) {}
 
             // Build issue body
             let issueBody = `## CI/CD Pipeline Failures\n\n`;
@@ -275,9 +305,10 @@ jobs:
             issueBody += `**Branch**: ${context.ref.replace('refs/heads/', '')}\n`;
             issueBody += `**Workflow Run**: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\n`;
 
-            const lintFailed = '${{ needs.quality-checks.outputs.lint-failed }}' !== '0';
-            const testFailed = '${{ needs.quality-checks.outputs.test-failed }}' !== '0';
-            const e2eFailed = '${{ needs.quality-checks.outputs.e2e-failed }}' !== '0';
+            const lintFailed = '${{ needs.quality-checks.outputs.lint-failed }}' !== '0' && '${{ needs.quality-checks.outputs.lint-failed }}' !== '';
+            const testFailed = '${{ needs.quality-checks.outputs.test-failed }}' !== '0' && '${{ needs.quality-checks.outputs.test-failed }}' !== '';
+            const e2eFailed = '${{ needs.quality-checks.outputs.e2e-failed }}' !== '0' && '${{ needs.quality-checks.outputs.e2e-failed }}' !== '';
+            const trivyFailed = '${{ needs.security-scan.outputs.trivy-failed }}' !== '0' && '${{ needs.security-scan.outputs.trivy-failed }}' !== '';
 
             if (lintFailed) {
               issueBody += `### Linter Failed\n\n`;
@@ -295,6 +326,13 @@ jobs:
               issueBody += `### E2E Tests Failed\n\n`;
               issueBody += `Exit code: ${{ needs.quality-checks.outputs.e2e-failed }}\n\n`;
               issueBody += `<details><summary>E2E Output</summary>\n\n\`\`\`\n${e2eOutput}\n\`\`\`\n</details>\n\n`;
+            }
+
+            if (trivyFailed) {
+              issueBody += `### Security Scan Failed (Trivy)\n\n`;
+              issueBody += `Exit code: ${{ needs.security-scan.outputs.trivy-failed }}\n\n`;
+              issueBody += `Found CRITICAL or HIGH severity vulnerabilities in Docker image.\n\n`;
+              issueBody += `<details><summary>Trivy Output</summary>\n\n\`\`\`\n${trivyOutput}\n\`\`\`\n</details>\n\n`;
             }
 
             issueBody += `---\n\n`;
