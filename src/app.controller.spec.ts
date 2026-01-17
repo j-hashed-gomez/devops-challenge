@@ -27,6 +27,7 @@ describe('AppController', () => {
 
   describe('visitorInfo', () => {
     it('should return visitor information', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const mockRequest = {
         method: 'GET',
         path: '/',
@@ -36,6 +37,7 @@ describe('AppController', () => {
         query: {},
       } as any;
 
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       const result = await appController.visitorInfo(mockRequest);
 
       expect(result).toEqual({
