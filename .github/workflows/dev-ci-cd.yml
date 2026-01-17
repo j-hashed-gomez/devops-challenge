@@ -200,17 +200,16 @@ jobs:
     name: Report Failures
     runs-on: ubuntu-latest
     needs: [quality-checks, build-image, security-scan]
-    if: always()
+    if: always() && (needs.quality-checks.result == 'failure' || needs.security-scan.result == 'failure')
     permissions:
       issues: write
 
     steps:
       - name: Download all artifacts
-        if: needs.quality-checks.outputs.has-errors == 'true' || needs.security-scan.outputs.has-vulnerabilities == 'true'
         uses: actions/download-artifact@v4
+        continue-on-error: true
 
       - name: Analyze failures and create issue
-        if: needs.quality-checks.outputs.has-errors == 'true' || needs.security-scan.outputs.has-vulnerabilities == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -220,37 +219,49 @@ jobs:
             issueBody += `**Commit:** ${{ github.sha }}\n`;
             issueBody += `**Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\n`;
 
-            if ('${{ needs.quality-checks.outputs.has-errors }}' === 'true') {
-              issueBody += '### Quality Check Failures\n\n';
+            let hasErrors = false;
 
-              try {
-                const lintOutput = fs.readFileSync('test-outputs/lint-output.txt', 'utf8');
-                if (lintOutput.includes('ELIFECYCLE') || lintOutput.includes('error')) {
-                  issueBody += '#### Linting Errors\n```\n' + lintOutput + '\n```\n\n';
-                }
-              } catch (e) {}
+            // Check for quality check failures
+            try {
+              const lintOutput = fs.readFileSync('test-outputs/lint-output.txt', 'utf8');
+              if (lintOutput.includes('ELIFECYCLE') || lintOutput.includes('error')) {
+                if (!hasErrors) issueBody += '### Quality Check Failures\n\n';
+                hasErrors = true;
+                issueBody += '#### Linting Errors\n```\n' + lintOutput + '\n```\n\n';
+              }
+            } catch (e) {}
 
-              try {
-                const testOutput = fs.readFileSync('test-outputs/test-output.txt', 'utf8');
-                if (testOutput.includes('FAIL') || testOutput.includes('ELIFECYCLE')) {
-                  issueBody += '#### Unit Test Failures\n```\n' + testOutput + '\n```\n\n';
-                }
-              } catch (e) {}
+            try {
+              const testOutput = fs.readFileSync('test-outputs/test-output.txt', 'utf8');
+              if (testOutput.includes('FAIL') || testOutput.includes('ELIFECYCLE')) {
+                if (!hasErrors) issueBody += '### Quality Check Failures\n\n';
+                hasErrors = true;
+                issueBody += '#### Unit Test Failures\n```\n' + testOutput + '\n```\n\n';
+              }
+            } catch (e) {}
 
-              try {
-                const e2eOutput = fs.readFileSync('test-outputs/e2e-output.txt', 'utf8');
-                if (e2eOutput.includes('FAIL') || e2eOutput.includes('ELIFECYCLE')) {
-                  issueBody += '#### E2E Test Failures\n```\n' + e2eOutput + '\n```\n\n';
-                }
-              } catch (e) {}
-            }
+            try {
+              const e2eOutput = fs.readFileSync('test-outputs/e2e-output.txt', 'utf8');
+              if (e2eOutput.includes('FAIL') || e2eOutput.includes('ELIFECYCLE')) {
+                if (!hasErrors) issueBody += '### Quality Check Failures\n\n';
+                hasErrors = true;
+                issueBody += '#### E2E Test Failures\n```\n' + e2eOutput + '\n```\n\n';
+              }
+            } catch (e) {}
 
-            if ('${{ needs.security-scan.outputs.has-vulnerabilities }}' === 'true') {
-              issueBody += '### Security Vulnerabilities\n\n';
-              try {
-                const trivyOutput = fs.readFileSync('trivy-output/trivy-output.txt', 'utf8');
+            // Check for security vulnerabilities
+            try {
+              const trivyOutput = fs.readFileSync('trivy-output/trivy-output.txt', 'utf8');
+              if (trivyOutput.length > 0) {
+                issueBody += '### Security Vulnerabilities\n\n';
                 issueBody += '```\n' + trivyOutput + '\n```\n\n';
-              } catch (e) {}
+                hasErrors = true;
+              }
+            } catch (e) {}
+
+            if (!hasErrors) {
+              console.log('No error artifacts found, skipping issue creation');
+              return;
             }
 
             issueBody += '---\n';
