@@ -35,9 +35,9 @@ variable "availability_zones" {
 }
 
 variable "node_instance_types" {
-  description = "EC2 instance types for EKS nodes"
+  description = "EC2 instance types for EKS nodes. Use non-burstable instances for production (m5, m6i, c5, etc). Avoid t3/t2 instances in production as they rely on CPU credits which can be exhausted under sustained load."
   type        = list(string)
-  default     = ["t3.medium"]
+  default     = ["m5.large"]
 }
 
 variable "node_desired_size" {

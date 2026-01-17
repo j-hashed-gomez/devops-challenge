@@ -62,7 +62,7 @@ aws_region      = "us-east-1"
 cluster_name    = "tech-challenge-cluster"
 cluster_version = "1.31"
 
-node_instance_types = ["t3.medium"]
+node_instance_types = ["m5.large"]
 node_desired_size   = 2
 node_min_size       = 1
 node_max_size       = 4
@@ -126,21 +126,41 @@ View outputs:
 terraform output
 ```
 
+## Instance Type Selection
+
+**Production Recommendation: m5.large (default)**
+
+For production workloads, use non-burstable instance types:
+- **m5.large**: 2 vCPU, 8 GB RAM - balanced compute/memory (recommended)
+- **m6i.large**: 2 vCPU, 8 GB RAM - latest generation, better performance
+- **c5.large**: 2 vCPU, 4 GB RAM - compute optimized
+- **r5.large**: 2 vCPU, 16 GB RAM - memory optimized
+
+**Why not t3/t2 instances?**
+
+T-series instances (t3, t2) are burstable and rely on CPU credits:
+- CPU credits accumulate when idle and are consumed under load
+- Once credits are exhausted, CPU is throttled to baseline (20-30%)
+- This causes unpredictable performance degradation in production
+- Not suitable for sustained workloads or production environments
+- Only appropriate for development/testing environments
+
 ## Cost Estimation
 
 Estimated monthly costs (us-east-1):
 
 - EKS cluster: ~$73/month
-- 2 x t3.medium nodes (24/7): ~$60/month
+- 2 x m5.large nodes (24/7): ~$140/month
 - 3 x NAT Gateways: ~$97/month
 - Data transfer: varies
 
-**Total: ~$230/month**
+**Total: ~$310/month**
 
 To reduce costs:
 - Use a single NAT Gateway instead of 3 (reduces HA)
-- Use smaller instance types (t3.small)
-- Enable cluster autoscaling to scale to zero during off-hours
+- Enable cluster autoscaling to scale down during off-hours
+- Use Spot instances for non-critical workloads (50-90% discount)
+- Consider reserved instances for predictable workloads (up to 72% discount)
 
 ## Security Features
 

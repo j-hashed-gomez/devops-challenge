@@ -9,7 +9,13 @@ cluster_version = "1.31"
 vpc_cidr           = "10.0.0.0/16"
 availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
 
-node_instance_types = ["t3.medium"]
+# Use non-burstable instances for production workloads
+# m5.large: 2 vCPU, 8 GB RAM - balanced compute/memory
+# m6i.large: 2 vCPU, 8 GB RAM - latest generation
+# c5.large: 2 vCPU, 4 GB RAM - compute optimized
+# r5.large: 2 vCPU, 16 GB RAM - memory optimized
+# Avoid t3/t2 instances in production (burstable performance)
+node_instance_types = ["m5.large"]
 node_desired_size   = 2
 node_min_size       = 1
 node_max_size       = 4
