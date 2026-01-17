@@ -18,7 +18,7 @@ describe('VisitsService', () => {
       providers: [
         VisitsService,
         {
-          provide: getModelToken(Visit.name),
+          provide: getModelToken('Visit'),
           useValue: mockVisitModel,
         },
       ],
