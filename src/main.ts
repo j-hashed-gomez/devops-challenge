@@ -9,20 +9,14 @@ async function bootstrap() {
   const register = new promClient.Registry();
   promClient.collectDefaultMetrics({ register });
 
-  // Custom metrics
-  const httpRequestDuration = new promClient.Histogram({
-    name: 'http_request_duration_seconds',
-    help: 'Duration of HTTP requests in seconds',
-    labelNames: ['method', 'route', 'status_code'],
-    registers: [register],
-  });
-
   // Metrics endpoint
-  app.use('/metrics', async (req, res) => {
-    res.set('Content-Type', register.contentType);
-    res.end(await register.metrics());
+  app.use('/metrics', async (req: unknown, res: unknown) => {
+    const response = res as { set: (key: string, value: string) => void; end: (data: string) => void };
+    response.set('Content-Type', register.contentType);
+    response.end(await register.metrics());
   });
 
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap();
+
+void bootstrap();

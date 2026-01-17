@@ -7,7 +7,7 @@ export class HealthController {
   constructor(@InjectConnection() private connection: Connection) {}
 
   @Get()
-  async check() {
+  check() {
     const dbState = this.connection.readyState;
     const isHealthy = dbState === 1; // 1 = connected
 
@@ -22,12 +22,12 @@ export class HealthController {
   }
 
   private getConnectionStatus(state: number): string {
-    const states = {
+    const states: Record<number, string> = {
       0: 'disconnected',
       1: 'connected',
       2: 'connecting',
       3: 'disconnecting',
     };
-    return states[state] || 'unknown';
+    return states[state] ?? 'unknown';
   }
 }
