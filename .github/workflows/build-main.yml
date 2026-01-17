@@ -55,28 +55,34 @@ jobs:
       - name: Run linter
         id: lint
         continue-on-error: true
+        shell: bash {0}
         run: |
           pnpm run lint 2>&1 | tee lint-output.txt
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
-          exit $?
+          LINT_EXIT=$?
+          echo "exit_code=$LINT_EXIT" >> $GITHUB_OUTPUT
+          exit $LINT_EXIT
 
       - name: Run unit tests
         id: test
         continue-on-error: true
+        shell: bash {0}
         run: |
           pnpm run test 2>&1 | tee test-output.txt
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
-          exit $?
+          TEST_EXIT=$?
+          echo "exit_code=$TEST_EXIT" >> $GITHUB_OUTPUT
+          exit $TEST_EXIT
 
       - name: Run E2E tests
         id: e2e
         continue-on-error: true
+        shell: bash {0}
         env:
           MONGODB_URI: mongodb://test:test@localhost:27017/tech_challenge?authSource=admin
         run: |
           pnpm run test:e2e 2>&1 | tee e2e-output.txt
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
-          exit $?
+          E2E_EXIT=$?
+          echo "exit_code=$E2E_EXIT" >> $GITHUB_OUTPUT
+          exit $E2E_EXIT
 
       - name: Upload test outputs
         if: always()
@@ -169,9 +175,17 @@ jobs:
           tags: |
             type=sha,prefix=main-,format=short
 
+      - name: Install Trivy
+        run: |
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy -y
+
       - name: Run Trivy vulnerability scanner
         id: trivy
         continue-on-error: true
+        shell: bash {0}
         run: |
           # Run Trivy and capture output
           trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt
