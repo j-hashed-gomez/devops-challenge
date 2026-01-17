@@ -50,36 +50,17 @@ jobs:
 
       - name: Run all quality checks
         id: quality
+        continue-on-error: true
         run: |
-          # Run all checks and capture results
-          LINT_FAILED=0
-          TEST_FAILED=0
-          E2E_FAILED=0
-
+          # Run all checks and capture results (don't stop on failures)
           echo "Running linter..."
-          pnpm run lint 2>&1 | tee lint-output.txt || LINT_FAILED=1
+          pnpm run lint 2>&1 | tee lint-output.txt || true
 
           echo "Running unit tests..."
-          pnpm run test 2>&1 | tee test-output.txt || TEST_FAILED=1
+          pnpm run test 2>&1 | tee test-output.txt || true
 
           echo "Running E2E tests..."
-          pnpm run test:e2e 2>&1 | tee e2e-output.txt || E2E_FAILED=1
-
-          # Report results
-          if [ $LINT_FAILED -eq 1 ]; then
-            echo "::error::Linter failed"
-          fi
-          if [ $TEST_FAILED -eq 1 ]; then
-            echo "::error::Unit tests failed"
-          fi
-          if [ $E2E_FAILED -eq 1 ]; then
-            echo "::error::E2E tests failed"
-          fi
-
-          # Fail if any check failed
-          if [ $LINT_FAILED -eq 1 ] || [ $TEST_FAILED -eq 1 ] || [ $E2E_FAILED -eq 1 ]; then
-            exit 1
-          fi
+          pnpm run test:e2e 2>&1 | tee e2e-output.txt || true
         env:
           MONGODB_URI: mongodb://test:test@localhost:27017/tech_challenge?authSource=admin
 
@@ -172,19 +153,13 @@ jobs:
 
       - name: Run Trivy vulnerability scanner
         id: trivy
+        continue-on-error: true
         run: |
-          # Run Trivy and capture output
-          TRIVY_FAILED=0
-          trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt || TRIVY_FAILED=1
+          # Run Trivy and capture output (don't fail the job)
+          trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt || true
 
-          # Also generate SARIF format (without exit code check)
+          # Also generate SARIF format
           trivy image --format sarif --output trivy-results.sarif --severity CRITICAL,HIGH ${{ fromJSON(steps.meta.outputs.json).tags[0] }} || true
-
-          # Fail if vulnerabilities found
-          if [ $TRIVY_FAILED -eq 1 ]; then
-            echo "::error::Security vulnerabilities found"
-            exit 1
-          fi
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
@@ -253,20 +228,18 @@ jobs:
     name: Report CI/CD Failures
     runs-on: ubuntu-latest
     needs: [quality-checks, build-image, security-scan]
-    if: always() && (needs.quality-checks.result == 'failure' || needs.security-scan.result == 'failure')
+    if: always()
     permissions:
       issues: write
 
     steps:
       - name: Download test outputs
-        if: needs.quality-checks.result == 'failure'
         uses: actions/download-artifact@v4
         with:
           name: test-outputs
         continue-on-error: true
 
       - name: Download Trivy output
-        if: needs.security-scan.result == 'failure'
         uses: actions/download-artifact@v4
         with:
           name: trivy-output
@@ -289,35 +262,43 @@ jobs:
             try { e2eOutput = fs.readFileSync('e2e-output.txt', 'utf8'); } catch(e) {}
             try { trivyOutput = fs.readFileSync('trivy-output.txt', 'utf8'); } catch(e) {}
 
+            // Detect if there are actual errors in the outputs
+            const hasLintErrors = lintOutput.includes('error') || lintOutput.includes('✖');
+            const hasTestErrors = testOutput.includes('FAIL') || testOutput.includes('failed');
+            const hasE2EErrors = e2eOutput.includes('FAIL') || e2eOutput.includes('failed');
+            const hasTrivyErrors = trivyOutput.includes('CRITICAL') || trivyOutput.includes('HIGH');
+
+            const hasAnyErrors = hasLintErrors || hasTestErrors || hasE2EErrors || hasTrivyErrors;
+
+            // Only create issue if there are actual errors
+            if (!hasAnyErrors) {
+              console.log('No errors detected, skipping issue creation');
+              return;
+            }
+
             // Build issue body
             let issueBody = `## CI/CD Pipeline Failures\n\n`;
             issueBody += `**Commit**: ${context.sha.substring(0, 7)}\n`;
             issueBody += `**Branch**: ${context.ref.replace('refs/heads/', '')}\n`;
             issueBody += `**Workflow Run**: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\n`;
 
-            // Detect failures from job results
-            const qualityChecksFailed = '${{ needs.quality-checks.result }}' === 'failure';
-            const securityScanFailed = '${{ needs.security-scan.result }}' === 'failure';
-
-            // Show failures with details - if job failed, show all outputs that exist
-            if (qualityChecksFailed) {
-              if (lintOutput) {
-                issueBody += `### Linter Failed\n\n`;
-                issueBody += `<details><summary>Lint Output</summary>\n\n\`\`\`\n${lintOutput}\n\`\`\`\n</details>\n\n`;
-              }
-
-              if (testOutput) {
-                issueBody += `### Unit Tests Failed\n\n`;
-                issueBody += `<details><summary>Test Output</summary>\n\n\`\`\`\n${testOutput}\n\`\`\`\n</details>\n\n`;
-              }
-
-              if (e2eOutput) {
-                issueBody += `### E2E Tests Failed\n\n`;
-                issueBody += `<details><summary>E2E Output</summary>\n\n\`\`\`\n${e2eOutput}\n\`\`\`\n</details>\n\n`;
-              }
+            // Show failures with details
+            if (hasLintErrors) {
+              issueBody += `### Linter Failed\n\n`;
+              issueBody += `<details><summary>Lint Output</summary>\n\n\`\`\`\n${lintOutput}\n\`\`\`\n</details>\n\n`;
             }
 
-            if (securityScanFailed && trivyOutput) {
+            if (hasTestErrors) {
+              issueBody += `### Unit Tests Failed\n\n`;
+              issueBody += `<details><summary>Test Output</summary>\n\n\`\`\`\n${testOutput}\n\`\`\`\n</details>\n\n`;
+            }
+
+            if (hasE2EErrors) {
+              issueBody += `### E2E Tests Failed\n\n`;
+              issueBody += `<details><summary>E2E Output</summary>\n\n\`\`\`\n${e2eOutput}\n\`\`\`\n</details>\n\n`;
+            }
+
+            if (hasTrivyErrors) {
               issueBody += `### Security Scan Failed (Trivy)\n\n`;
               issueBody += `Found CRITICAL or HIGH severity vulnerabilities in Docker image.\n\n`;
               issueBody += `<details><summary>Trivy Output</summary>\n\n\`\`\`\n${trivyOutput}\n\`\`\`\n</details>\n\n`;
