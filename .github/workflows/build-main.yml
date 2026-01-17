@@ -19,6 +19,7 @@ jobs:
       contents: read
       packages: write
       security-events: write
+      issues: write
 
     services:
       mongodb:
@@ -53,15 +54,21 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run linter
-        run: pnpm run lint
+        id: lint
+        continue-on-error: true
+        run: pnpm run lint 2>&1 | tee lint-output.txt
 
       - name: Run tests
-        run: pnpm run test
+        id: test
+        continue-on-error: true
+        run: pnpm run test 2>&1 | tee test-output.txt
 
       - name: Run e2e tests
+        id: e2e
+        continue-on-error: true
         env:
           MONGODB_URI: mongodb://test:test@localhost:27017/tech_challenge?authSource=admin
-        run: pnpm run test:e2e
+        run: pnpm run test:e2e 2>&1 | tee e2e-output.txt
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -107,6 +114,98 @@ jobs:
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
+
+      - name: Check for failures and create/update issue
+        if: steps.lint.outcome == 'failure' || steps.test.outcome == 'failure' || steps.e2e.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read outputs
+            let lintOutput = '';
+            let testOutput = '';
+            let e2eOutput = '';
+
+            try { lintOutput = fs.readFileSync('lint-output.txt', 'utf8'); } catch(e) {}
+            try { testOutput = fs.readFileSync('test-output.txt', 'utf8'); } catch(e) {}
+            try { e2eOutput = fs.readFileSync('e2e-output.txt', 'utf8'); } catch(e) {}
+
+            // Build issue body
+            let issueBody = `## CI/CD Pipeline Failures\n\n`;
+            issueBody += `**Commit**: ${context.sha.substring(0, 7)}\n`;
+            issueBody += `**Branch**: ${context.ref.replace('refs/heads/', '')}\n`;
+            issueBody += `**Workflow Run**: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\n`;
+
+            if ('${{ steps.lint.outcome }}' === 'failure') {
+              issueBody += `### Linter Failed\n\n`;
+              issueBody += `<details><summary>Lint Output</summary>\n\n\`\`\`\n${lintOutput}\n\`\`\`\n</details>\n\n`;
+            }
+
+            if ('${{ steps.test.outcome }}' === 'failure') {
+              issueBody += `### Unit Tests Failed\n\n`;
+              issueBody += `<details><summary>Test Output</summary>\n\n\`\`\`\n${testOutput}\n\`\`\`\n</details>\n\n`;
+            }
+
+            if ('${{ steps.e2e.outcome }}' === 'failure') {
+              issueBody += `### E2E Tests Failed\n\n`;
+              issueBody += `<details><summary>E2E Output</summary>\n\n\`\`\`\n${e2eOutput}\n\`\`\`\n</details>\n\n`;
+            }
+
+            issueBody += `---\n\n`;
+            issueBody += `## Action Required\n\n`;
+            issueBody += `**BLOCKING**: These failures prevent the Docker image from being pushed to the registry.\n\n`;
+            issueBody += `**Impact**:\n`;
+            issueBody += `- Docker image will NOT be pushed to GitHub Container Registry\n`;
+            issueBody += `- Production deployment is BLOCKED until these issues are resolved\n`;
+            issueBody += `- No new artifacts will be available for deployment\n\n`;
+            issueBody += `**Next Steps**:\n`;
+            issueBody += `1. Review the detailed error outputs above\n`;
+            issueBody += `2. Fix the failing checks locally\n`;
+            issueBody += `3. Run tests locally: \`pnpm run lint && pnpm run test && pnpm run test:e2e\`\n`;
+            issueBody += `4. Push your fixes to trigger a new CI run\n`;
+            issueBody += `5. This issue will be updated or closed automatically\n\n`;
+            issueBody += `*This issue was automatically created by the CI/CD pipeline.*`;
+
+            // Check for existing open issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ci-failure',
+              per_page: 100
+            });
+
+            const existingIssue = issues.data.find(issue =>
+              issue.title === 'CI/CD Pipeline Failures on main branch'
+            );
+
+            if (existingIssue) {
+              // Update existing issue
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: `## New Failure Detected\n\n${issueBody}`
+              });
+              console.log(`Updated existing issue #${existingIssue.number}`);
+            } else {
+              // Create new issue
+              const newIssue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'CI/CD Pipeline Failures on main branch',
+                body: issueBody,
+                labels: ['ci-failure', 'bug', 'automated']
+              });
+              console.log(`Created new issue #${newIssue.data.number}`);
+            }
+
+      - name: Fail workflow if tests failed
+        if: steps.lint.outcome == 'failure' || steps.test.outcome == 'failure' || steps.e2e.outcome == 'failure'
+        run: |
+          echo "::error::One or more quality checks failed. Image will not be pushed."
+          exit 1
 
       - name: Push Docker image
         uses: docker/build-push-action@v5
