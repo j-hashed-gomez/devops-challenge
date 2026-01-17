@@ -55,37 +55,28 @@ jobs:
       - name: Run linter
         id: lint
         continue-on-error: true
-        shell: bash {0}
         run: |
-          set +e
           pnpm run lint 2>&1 | tee lint-output.txt
-          LINT_EXIT=$?
-          echo "exit_code=$LINT_EXIT" >> $GITHUB_OUTPUT
-          exit 0
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          exit $?
 
       - name: Run unit tests
         id: test
         continue-on-error: true
-        shell: bash {0}
         run: |
-          set +e
           pnpm run test 2>&1 | tee test-output.txt
-          TEST_EXIT=$?
-          echo "exit_code=$TEST_EXIT" >> $GITHUB_OUTPUT
-          exit 0
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          exit $?
 
       - name: Run E2E tests
         id: e2e
         continue-on-error: true
-        shell: bash {0}
         env:
           MONGODB_URI: mongodb://test:test@localhost:27017/tech_challenge?authSource=admin
         run: |
-          set +e
           pnpm run test:e2e 2>&1 | tee e2e-output.txt
-          E2E_EXIT=$?
-          echo "exit_code=$E2E_EXIT" >> $GITHUB_OUTPUT
-          exit 0
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          exit $?
 
       - name: Upload test outputs
         if: always()
@@ -181,13 +172,16 @@ jobs:
       - name: Run Trivy vulnerability scanner
         id: trivy
         continue-on-error: true
-        shell: bash {0}
         run: |
-          set +e
-          trivy image --format sarif --output trivy-results.sarif --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt
+          # Run Trivy and capture output
+          trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt
           TRIVY_EXIT=$?
+
+          # Also generate SARIF format (without exit code check)
+          trivy image --format sarif --output trivy-results.sarif --severity CRITICAL,HIGH ${{ fromJSON(steps.meta.outputs.json).tags[0] }} || true
+
           echo "exit_code=$TRIVY_EXIT" >> $GITHUB_OUTPUT
-          exit 0
+          exit $TRIVY_EXIT
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
@@ -305,34 +299,55 @@ jobs:
             issueBody += `**Branch**: ${context.ref.replace('refs/heads/', '')}\n`;
             issueBody += `**Workflow Run**: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\n`;
 
-            const lintFailed = '${{ needs.quality-checks.outputs.lint-failed }}' !== '0' && '${{ needs.quality-checks.outputs.lint-failed }}' !== '';
-            const testFailed = '${{ needs.quality-checks.outputs.test-failed }}' !== '0' && '${{ needs.quality-checks.outputs.test-failed }}' !== '';
-            const e2eFailed = '${{ needs.quality-checks.outputs.e2e-failed }}' !== '0' && '${{ needs.quality-checks.outputs.e2e-failed }}' !== '';
-            const trivyFailed = '${{ needs.security-scan.outputs.trivy-failed }}' !== '0' && '${{ needs.security-scan.outputs.trivy-failed }}' !== '';
+            // Detect failures from exit codes or job failure
+            const qualityChecksFailed = '${{ needs.quality-checks.result }}' === 'failure';
+            const securityScanFailed = '${{ needs.security-scan.result }}' === 'failure';
 
-            if (lintFailed) {
+            const lintExitCode = '${{ needs.quality-checks.outputs.lint-failed }}';
+            const testExitCode = '${{ needs.quality-checks.outputs.test-failed }}';
+            const e2eExitCode = '${{ needs.quality-checks.outputs.e2e-failed }}';
+            const trivyExitCode = '${{ needs.security-scan.outputs.trivy-failed }}';
+
+            const lintFailed = lintExitCode && lintExitCode !== '0';
+            const testFailed = testExitCode && testExitCode !== '0';
+            const e2eFailed = e2eExitCode && e2eExitCode !== '0';
+            const trivyFailed = trivyExitCode && trivyExitCode !== '0';
+
+            // If quality-checks failed but we don't have specific exit codes, show all outputs
+            const showAllQualityOutputs = qualityChecksFailed && !lintFailed && !testFailed && !e2eFailed;
+
+            // Show failures with details
+            if (lintFailed || (showAllQualityOutputs && lintOutput)) {
               issueBody += `### Linter Failed\n\n`;
-              issueBody += `Exit code: ${{ needs.quality-checks.outputs.lint-failed }}\n\n`;
-              issueBody += `<details><summary>Lint Output</summary>\n\n\`\`\`\n${lintOutput}\n\`\`\`\n</details>\n\n`;
+              if (lintExitCode && lintExitCode !== '0') {
+                issueBody += `Exit code: ${lintExitCode}\n\n`;
+              }
+              issueBody += `<details><summary>Lint Output</summary>\n\n\`\`\`\n${lintOutput || 'No output captured'}\n\`\`\`\n</details>\n\n`;
             }
 
-            if (testFailed) {
+            if (testFailed || (showAllQualityOutputs && testOutput)) {
               issueBody += `### Unit Tests Failed\n\n`;
-              issueBody += `Exit code: ${{ needs.quality-checks.outputs.test-failed }}\n\n`;
-              issueBody += `<details><summary>Test Output</summary>\n\n\`\`\`\n${testOutput}\n\`\`\`\n</details>\n\n`;
+              if (testExitCode && testExitCode !== '0') {
+                issueBody += `Exit code: ${testExitCode}\n\n`;
+              }
+              issueBody += `<details><summary>Test Output</summary>\n\n\`\`\`\n${testOutput || 'No output captured'}\n\`\`\`\n</details>\n\n`;
             }
 
-            if (e2eFailed) {
+            if (e2eFailed || (showAllQualityOutputs && e2eOutput)) {
               issueBody += `### E2E Tests Failed\n\n`;
-              issueBody += `Exit code: ${{ needs.quality-checks.outputs.e2e-failed }}\n\n`;
-              issueBody += `<details><summary>E2E Output</summary>\n\n\`\`\`\n${e2eOutput}\n\`\`\`\n</details>\n\n`;
+              if (e2eExitCode && e2eExitCode !== '0') {
+                issueBody += `Exit code: ${e2eExitCode}\n\n`;
+              }
+              issueBody += `<details><summary>E2E Output</summary>\n\n\`\`\`\n${e2eOutput || 'No output captured'}\n\`\`\`\n</details>\n\n`;
             }
 
-            if (trivyFailed) {
+            if (trivyFailed || (securityScanFailed && trivyOutput)) {
               issueBody += `### Security Scan Failed (Trivy)\n\n`;
-              issueBody += `Exit code: ${{ needs.security-scan.outputs.trivy-failed }}\n\n`;
+              if (trivyExitCode && trivyExitCode !== '0') {
+                issueBody += `Exit code: ${trivyExitCode}\n\n`;
+              }
               issueBody += `Found CRITICAL or HIGH severity vulnerabilities in Docker image.\n\n`;
-              issueBody += `<details><summary>Trivy Output</summary>\n\n\`\`\`\n${trivyOutput}\n\`\`\`\n</details>\n\n`;
+              issueBody += `<details><summary>Trivy Output</summary>\n\n\`\`\`\n${trivyOutput || 'No output captured'}\n\`\`\`\n</details>\n\n`;
             }
 
             issueBody += `---\n\n`;
