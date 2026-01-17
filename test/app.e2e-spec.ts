@@ -24,6 +24,11 @@ describe('AppController (e2e)', () => {
     return request(app.getHttpServer())
       .get('/')
       .expect(200)
-      .expect('Hello World!');
+      .expect((res) => {
+        expect(res.body).toHaveProperty('request');
+        expect(res.body).toHaveProperty('user_agent');
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        expect(res.body.request).toContain('[GET] /');
+      });
   });
 });

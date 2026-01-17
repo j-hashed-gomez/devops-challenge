@@ -1,0 +1,601 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - dev
+    tags:
+      - 'v*.*.*'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'img/**'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      deploy_to_production:
+        description: 'Deploy to production after successful build'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  quality-checks:
+    name: Code Quality & Tests
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:8.0.17
+        ports:
+          - 27017:27017
+        env:
+          MONGO_INITDB_ROOT_USERNAME: test
+          MONGO_INITDB_ROOT_PASSWORD: test
+          MONGO_INITDB_DATABASE: tech_challenge
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping: 1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run all quality checks
+        id: quality
+        run: |
+          set +e
+          set -o pipefail
+
+          LINT_FAILED=0
+          TEST_FAILED=0
+          E2E_FAILED=0
+
+          echo "Running linter..."
+          pnpm run lint 2>&1 | tee lint-output.txt
+          LINT_FAILED=$?
+
+          echo "Running unit tests..."
+          pnpm run test 2>&1 | tee test-output.txt
+          TEST_FAILED=$?
+
+          echo "Running E2E tests..."
+          pnpm run test:e2e 2>&1 | tee e2e-output.txt
+          E2E_FAILED=$?
+
+          if [ $LINT_FAILED -ne 0 ] || [ $TEST_FAILED -ne 0 ] || [ $E2E_FAILED -ne 0 ]; then
+            echo "::error::Quality checks failed"
+            echo "has-errors=true" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          echo "has-errors=false" >> $GITHUB_OUTPUT
+          echo "All quality checks passed"
+        env:
+          MONGODB_URI: mongodb://test:test@localhost:27017/tech_challenge?authSource=admin
+
+      - name: Upload test outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-outputs
+          path: |
+            lint-output.txt
+            test-output.txt
+            e2e-output.txt
+          retention-days: 7
+
+    outputs:
+      has-errors: ${{ steps.quality.outputs.has-errors }}
+
+  build-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: quality-checks
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker,dest=/tmp/image.tar
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/image.tar
+          retention-days: 1
+
+  security-scan:
+    name: Security Scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: build-image
+    permissions:
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/image.tar
+
+      - name: Install Trivy
+        run: |
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy
+
+      - name: Run Trivy scan
+        id: trivy
+        run: |
+          set +e
+          trivy image --exit-code 1 --severity HIGH,CRITICAL \
+            --ignorefile .trivyignore \
+            --format sarif --output trivy-results.sarif \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }}
+          TRIVY_EXIT=$?
+
+          trivy image --severity HIGH,CRITICAL \
+            --ignorefile .trivyignore \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }} | tee trivy-output.txt
+
+          if [ $TRIVY_EXIT -ne 0 ]; then
+            echo "has-vulnerabilities=true" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          echo "has-vulnerabilities=false" >> $GITHUB_OUTPUT
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Upload Trivy output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-output
+          path: trivy-output.txt
+          retention-days: 7
+
+    outputs:
+      has-vulnerabilities: ${{ steps.trivy.outputs.has-vulnerabilities }}
+
+  report-failures:
+    name: Report Failures
+    runs-on: ubuntu-latest
+    needs: [quality-checks, build-image, security-scan]
+    if: always() && (needs.quality-checks.result == 'failure' || needs.security-scan.result == 'failure')
+    permissions:
+      issues: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+
+      - name: Analyze failures and create issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let issueBody = '## CI/CD Failure Report\n\n';
+            issueBody += `**Branch:** dev\n`;
+            issueBody += `**Commit:** ${{ github.sha }}\n`;
+            issueBody += `**Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\n`;
+
+            let hasErrors = false;
+
+            // Check for quality check failures
+            try {
+              const lintOutput = fs.readFileSync('test-outputs/lint-output.txt', 'utf8');
+              if (lintOutput.includes('ELIFECYCLE') || lintOutput.includes('error')) {
+                if (!hasErrors) issueBody += '### Quality Check Failures\n\n';
+                hasErrors = true;
+                issueBody += '#### Linting Errors\n```\n' + lintOutput + '\n```\n\n';
+              }
+            } catch (e) {}
+
+            try {
+              const testOutput = fs.readFileSync('test-outputs/test-output.txt', 'utf8');
+              if (testOutput.includes('FAIL') || testOutput.includes('ELIFECYCLE')) {
+                if (!hasErrors) issueBody += '### Quality Check Failures\n\n';
+                hasErrors = true;
+                issueBody += '#### Unit Test Failures\n```\n' + testOutput + '\n```\n\n';
+              }
+            } catch (e) {}
+
+            try {
+              const e2eOutput = fs.readFileSync('test-outputs/e2e-output.txt', 'utf8');
+              if (e2eOutput.includes('FAIL') || e2eOutput.includes('ELIFECYCLE')) {
+                if (!hasErrors) issueBody += '### Quality Check Failures\n\n';
+                hasErrors = true;
+                issueBody += '#### E2E Test Failures\n```\n' + e2eOutput + '\n```\n\n';
+              }
+            } catch (e) {}
+
+            // Check for security vulnerabilities
+            try {
+              const trivyOutput = fs.readFileSync('trivy-output/trivy-output.txt', 'utf8');
+              if (trivyOutput.length > 0) {
+                issueBody += '### Security Vulnerabilities\n\n';
+                issueBody += '```\n' + trivyOutput + '\n```\n\n';
+                hasErrors = true;
+              }
+            } catch (e) {}
+
+            if (!hasErrors) {
+              console.log('No error artifacts found, skipping issue creation');
+              return;
+            }
+
+            issueBody += '---\n';
+            issueBody += '*This issue was automatically created by the CI/CD pipeline.*';
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[DEV] CI/CD Failure - ${new Date().toISOString().split('T')[0]}`,
+              body: issueBody,
+              labels: ['ci-failure', 'automated', 'dev']
+            });
+
+  auto-merge-to-main:
+    name: Auto-merge to Main
+    runs-on: ubuntu-latest
+    needs: [quality-checks, build-image, security-scan]
+    if: |
+      needs.quality-checks.outputs.has-errors == 'false' &&
+      needs.security-scan.outputs.has-vulnerabilities == 'false'
+    permissions:
+      contents: write
+    outputs:
+      new-sha: ${{ steps.merge.outputs.sha }}
+
+    steps:
+      - name: Checkout dev branch
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge dev to main
+        id: merge
+        run: |
+          git fetch origin main:main
+          git checkout main
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            git merge dev --no-ff -m "Auto-merge dev to main - Release ${{ github.ref_name }}
+
+          This automated merge was triggered for release tag ${{ github.ref_name }} after successful:
+          - Code quality checks (lint, tests, e2e)
+          - Docker image build
+          - Security scan (Trivy)
+
+          Original commit: ${{ github.sha }}
+          Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            git merge dev --no-ff -m "Auto-merge dev to main - All quality checks passed
+
+          This automated merge was triggered after successful:
+          - Code quality checks (lint, tests, e2e)
+          - Docker image build
+          - Security scan (Trivy)
+
+          Commit: ${{ github.sha }}
+          Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Push to main
+        run: git push origin main
+
+      - name: Move tag to main (if tag push)
+        if: github.ref_type == 'tag'
+        run: |
+          # Delete tag from remote
+          git push origin :refs/tags/${{ github.ref_name }} || true
+
+          # Create tag on the new merge commit in main
+          git tag -f ${{ github.ref_name }}
+
+          # Push tag to new location
+          git push origin ${{ github.ref_name }}
+
+  push-image:
+    name: Push to Registry
+    runs-on: ubuntu-latest
+    needs: auto-merge-to-main
+    permissions:
+      packages: write
+
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/image.tar
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push image
+        run: |
+          BASE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }}"
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # Semantic version tagging for releases
+            VERSION="${{ github.ref_name }}"
+            VERSION_NO_V="${VERSION#v}"  # Remove 'v' prefix
+
+            # Extract version parts (e.g., v1.2.3 -> 1, 1.2, 1.2.3)
+            MAJOR=$(echo $VERSION_NO_V | cut -d. -f1)
+            MINOR=$(echo $VERSION_NO_V | cut -d. -f2)
+            PATCH=$(echo $VERSION_NO_V | cut -d. -f3)
+
+            # Tag with full version
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_NO_V}
+
+            # Tag with major.minor
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}
+
+            # Tag with major only
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}
+
+            # Tag as latest
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # Push all tags
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_NO_V}
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          else
+            # Branch push: tag as latest and main-sha
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            docker tag $BASE_IMAGE ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ needs.auto-merge-to-main.outputs.new-sha }}
+
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ needs.auto-merge-to-main.outputs.new-sha }}
+          fi
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: push-image
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ github.ref_name }}"
+
+          # Get previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${VERSION}^ 2>/dev/null || echo "")
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            COMMITS=$(git log ${PREVIOUS_TAG}..${VERSION} --pretty=format:"- %s (%h)" --no-merges)
+          else
+            COMMITS=$(git log ${VERSION} --pretty=format:"- %s (%h)" --no-merges | head -20)
+          fi
+
+          cat > release_notes.md <<EOF
+          ## Release ${VERSION}
+
+          ### Docker Images
+
+          \`\`\`
+          docker pull ghcr.io/${{ github.repository }}:${VERSION}
+          docker pull ghcr.io/${{ github.repository }}:latest
+          \`\`\`
+
+          ### Changes
+
+          ${COMMITS}
+
+          ### Validation
+
+          This release passed all quality gates:
+          - ✅ Code linting
+          - ✅ Unit tests
+          - ✅ E2E tests
+          - ✅ Security scan (Trivy)
+          - ✅ Docker image build
+
+          ### Artifacts
+
+          - Docker images available in GitHub Container Registry
+          - Tagged as: \`${VERSION}\`, \`${VERSION#v}\`, major, major.minor, \`latest\`
+          EOF
+
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const releaseNotes = fs.readFileSync('release_notes.md', 'utf8');
+
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: '${{ github.ref_name }}',
+              name: 'Release ${{ github.ref_name }}',
+              body: releaseNotes,
+              draft: false,
+              prerelease: false
+            });
+
+  deploy-to-production:
+    name: Deploy to Production (ArgoCD)
+    runs-on: ubuntu-latest
+    needs: push-image
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.deploy_to_production == 'true'
+    environment:
+      name: production
+      url: https://tech-challenge.example.com
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-east-1
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name devops-challenge-eks \
+            --region us-east-1
+
+      - name: Verify cluster connectivity
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Trigger ArgoCD sync for production
+        run: |
+          # Install ArgoCD CLI
+          curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          chmod +x argocd
+          sudo mv argocd /usr/local/bin/
+
+          # Login to ArgoCD
+          argocd login ${{ secrets.ARGOCD_SERVER }} \
+            --username ${{ secrets.ARGOCD_USERNAME }} \
+            --password ${{ secrets.ARGOCD_PASSWORD }} \
+            --insecure
+
+          # Sync the production application
+          argocd app sync tech-challenge-production \
+            --revision main \
+            --prune \
+            --timeout 600
+
+          # Wait for sync to complete
+          argocd app wait tech-challenge-production \
+            --health \
+            --timeout 600
+
+      - name: Verify deployment
+        run: |
+          echo "Verifying production deployment..."
+          kubectl get pods -n tech-challenge -l app=tech-challenge-app
+          kubectl get svc -n tech-challenge
+          kubectl get ingress -n tech-challenge
+
+          # Check application health
+          APP_URL=$(kubectl get ingress -n tech-challenge tech-challenge-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          curl -f https://${APP_URL}/health || exit 1
+
+      - name: Post deployment summary
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const summary = `## Production Deployment Summary
+
+            **Status:** ${{ job.status }}
+            **Image:** ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ github.sha }}
+            **Deployed by:** ${{ github.actor }}
+            **Timestamp:** ${new Date().toISOString()}
+
+            ### Deployment Details
+            - EKS Cluster: devops-challenge-eks
+            - Namespace: tech-challenge
+            - ArgoCD App: tech-challenge-production
+            - Sync Revision: main
+
+            ### Verification
+            \`\`\`bash
+            kubectl get pods -n tech-challenge
+            \`\`\`
+
+            ---
+            *Automated deployment via GitHub Actions + ArgoCD*
+            `;
+
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: '${{ github.sha }}',
+              body: summary
+            });
