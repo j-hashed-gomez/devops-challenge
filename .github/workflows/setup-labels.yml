@@ -1,0 +1,54 @@
+name: Setup Repository Labels
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/setup-labels.yml'
+
+jobs:
+  create-labels:
+    name: Create CI/CD Labels
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Create or update labels
+        run: |
+          # CI Failure label
+          gh label create "ci-failure" \
+            --description "CI pipeline failure detected" \
+            --color "d73a4a" \
+            --force || true
+
+          # Blocks Production label
+          gh label create "blocks-production" \
+            --description "Blocks deployment to production" \
+            --color "b60205" \
+            --force || true
+
+          # Lint Error label
+          gh label create "lint-error" \
+            --description "Code linting errors" \
+            --color "e99695" \
+            --force || true
+
+          # Test Failure label
+          gh label create "test-failure" \
+            --description "Test failures detected" \
+            --color "d93f0b" \
+            --force || true
+
+          # Security Critical label
+          gh label create "security-critical" \
+            --description "Critical security vulnerabilities found" \
+            --color "5319e7" \
+            --force || true
+
+          echo "Labels created successfully"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
