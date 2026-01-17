@@ -6,6 +6,9 @@ on:
       - main
     tags-ignore:
       - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
 
 env:
   REGISTRY: ghcr.io
@@ -179,7 +182,7 @@ jobs:
     name: Push to Registry
     runs-on: ubuntu-latest
     needs: [security-scan, report-failures]
-    if: needs.report-failures.outputs.has-errors != 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.report-failures.outputs.has-errors != 'true'
     permissions:
       contents: read
       packages: write
@@ -268,7 +271,7 @@ jobs:
           echo "Has errors: $HAS_ERRORS"
 
       - name: Create or update issue
-        if: steps.check-errors.outputs.has-errors == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.check-errors.outputs.has-errors == 'true'
         uses: actions/github-script@v7
         with:
           script: |
