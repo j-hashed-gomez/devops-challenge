@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
+import { HealthController } from './health.controller';
 import { VisitsModule } from './visits/visits.module';
 
 @Module({
@@ -19,6 +20,6 @@ import { VisitsModule } from './visits/visits.module';
     }),
     VisitsModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
 })
 export class AppModule {}

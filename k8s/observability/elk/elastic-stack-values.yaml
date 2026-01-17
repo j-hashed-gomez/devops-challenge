@@ -1,0 +1,247 @@
+# Helm values for Elastic Stack (ELK)
+# Install with: helm install elasticsearch elastic/elasticsearch -f elastic-stack-values.yaml -n logging --create-namespace
+
+# Elasticsearch configuration
+elasticsearch:
+  enabled: true
+
+  # Cluster settings
+  clusterName: "tech-challenge-logs"
+  nodeGroup: "master"
+
+  # Replicas
+  replicas: 1
+  minimumMasterNodes: 1
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  # Persistent storage
+  volumeClaimTemplate:
+    accessModes: [ "ReadWriteOnce" ]
+    storageClassName: gp3
+    resources:
+      requests:
+        storage: 30Gi
+
+  # JVM heap size (50% of memory limit)
+  esJavaOpts: "-Xmx1g -Xms1g"
+
+  # Security
+  esConfig:
+    elasticsearch.yml: |
+      xpack.security.enabled: false
+      # Enable security in production:
+      # xpack.security.enabled: true
+      # xpack.security.transport.ssl.enabled: true
+
+  # Service type
+  service:
+    type: ClusterIP
+
+---
+# Logstash configuration
+logstash:
+  enabled: true
+
+  # Replicas
+  replicas: 1
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+
+  # Persistent queue
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 5Gi
+
+  # Logstash pipeline configuration
+  logstashPipeline:
+    logstash.conf: |
+      input {
+        beats {
+          port => 5044
+        }
+      }
+
+      filter {
+        # Parse JSON logs
+        if [message] =~ /^{.*}$/ {
+          json {
+            source => "message"
+          }
+        }
+
+        # Add Kubernetes metadata
+        if [kubernetes] {
+          mutate {
+            add_field => {
+              "[@metadata][namespace]" => "%{[kubernetes][namespace]}"
+              "[@metadata][pod]" => "%{[kubernetes][pod][name]}"
+              "[@metadata][container]" => "%{[kubernetes][container][name]}"
+            }
+          }
+        }
+
+        # Parse timestamps
+        date {
+          match => [ "timestamp", "ISO8601" ]
+          target => "@timestamp"
+        }
+      }
+
+      output {
+        elasticsearch {
+          hosts => ["elasticsearch-master:9200"]
+          index => "logstash-%{[@metadata][namespace]}-%{+YYYY.MM.dd}"
+        }
+      }
+
+  service:
+    type: ClusterIP
+    ports:
+      - name: beats
+        port: 5044
+        protocol: TCP
+        targetPort: 5044
+
+---
+# Kibana configuration
+kibana:
+  enabled: true
+
+  # Replicas
+  replicas: 1
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+
+  # Elasticsearch connection
+  elasticsearchHosts: "http://elasticsearch-master:9200"
+
+  # Kibana configuration
+  kibanaConfig:
+    kibana.yml: |
+      server.name: kibana
+      server.host: "0.0.0.0"
+      elasticsearch.hosts: [ "http://elasticsearch-master:9200" ]
+      # Disable telemetry
+      telemetry.enabled: false
+      telemetry.optIn: false
+
+  # Ingress
+  ingress:
+    enabled: true
+    className: alb
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    hosts:
+      - host: kibana.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+
+  service:
+    type: ClusterIP
+    port: 5601
+
+---
+# Filebeat configuration (DaemonSet for log collection)
+filebeat:
+  enabled: true
+
+  # DaemonSet to run on all nodes
+  daemonset:
+    enabled: true
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+  # Filebeat configuration
+  filebeatConfig:
+    filebeat.yml: |
+      filebeat.inputs:
+      - type: container
+        paths:
+          - /var/log/containers/*.log
+        processors:
+        - add_kubernetes_metadata:
+            host: ${NODE_NAME}
+            matchers:
+            - logs_path:
+                logs_path: "/var/log/containers/"
+
+      # Kubernetes metadata enrichment
+      processors:
+        - add_cloud_metadata: ~
+        - add_host_metadata: ~
+        - add_kubernetes_metadata: ~
+        - drop_event:
+            when:
+              or:
+                - equals:
+                    kubernetes.namespace: "kube-system"
+                - equals:
+                    kubernetes.namespace: "kube-public"
+
+      # Output to Logstash
+      output.logstash:
+        hosts: ["logstash-logstash:5044"]
+
+      # Logging
+      logging.level: info
+      logging.to_files: false
+
+  # Mount host logs
+  extraVolumes:
+    - name: varlog
+      hostPath:
+        path: /var/log
+    - name: varlibdockercontainers
+      hostPath:
+        path: /var/lib/docker/containers
+
+  extraVolumeMounts:
+    - name: varlog
+      mountPath: /var/log
+      readOnly: true
+    - name: varlibdockercontainers
+      mountPath: /var/lib/docker/containers
+      readOnly: true
+
+  # Service account
+  serviceAccount:
+    create: true
+    name: filebeat
+
+  # Security context
+  securityContext:
+    runAsUser: 0
+    privileged: false
