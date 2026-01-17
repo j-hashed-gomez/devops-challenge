@@ -26,4 +26,12 @@ export class AppController {
       user_agent: request.get('user-agent') ?? 'unknown',
     };
   }
+
+  @Get('version')
+  getVersion(): { version: string; environment: string } {
+    return {
+      version: '1.0.0',
+      environment: process.env.NODE_ENV || 'development',
+    };
+  }
 }
