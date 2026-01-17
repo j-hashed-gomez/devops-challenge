@@ -171,82 +171,246 @@ docker compose down -v
 
 ### Implementation
 
-Three GitHub Actions workflows:
+Unified trunk-based development pipeline with a single GitHub Actions workflow that handles all CI/CD scenarios:
 
-**1. CI Workflow** (`ci.yml`)
-- Triggers: Pull requests and pushes to dev
-- Runs: Lint, unit tests, e2e tests
-- Uses: Service container for MongoDB
-- Purpose: Quality gate before merging
+**Workflow: `dev-ci-cd.yml`** (Unified CI/CD Pipeline)
 
-**2. Build Main** (`build-main.yml`)
-- Triggers: Pushes to main (no tags)
-- Creates: `main-{sha}` tagged images
-- Purpose: Unstable/development builds
+**Triggers:**
+- Push to `dev` branch: Continuous integration and auto-merge to main
+- Semantic version tags (v*.*.*): Release creation workflow
+- Manual dispatch: Optional production deployment override
 
-**3. Release** (`release.yml`)
-- Triggers: Semantic version tags (v*.*.*)
-- Creates: Multiple image tags (v1.0.0, v1.0, v1, latest)
-- Stages: Validate → Lint → Test → Build → Security Scan → Publish → GitHub Release
-- Purpose: Production releases
+**Pipeline Stages:**
+1. Code Quality & Tests (lint, unit tests, e2e tests)
+2. Build Docker Image (multi-stage with distroless)
+3. Security Scan (Trivy vulnerability scanning)
+4. Report Failures (automated issue creation on errors)
+5. Auto-merge to Main (dev → main when all checks pass)
+6. Push to Registry (GHCR with appropriate tags)
+7. Create GitHub Release (for semantic version tags only)
+8. Deploy to Production (manual approval via ArgoCD)
+
+### Trunk-Based Development Workflow
+
+**Branch Push Scenario (dev branch):**
+```
+Developer: git push origin dev
+  ↓
+Pipeline executes:
+  1. Quality checks (lint, test, e2e)
+  2. Docker image build
+  3. Trivy security scan
+  ↓
+If all checks pass:
+  4. Auto-merge dev → main (no-ff merge)
+  5. Push images to registry:
+     - ghcr.io/repo:latest
+     - ghcr.io/repo:main-{sha}
+  ↓
+If any check fails:
+  - Creates GitHub issue with complete error details
+  - NO merge to main
+  - NO image push to registry
+  - Blocks deployment pipeline
+```
+
+**Tag Release Scenario (semantic version):**
+```
+Developer: git tag v1.2.3 && git push origin v1.2.3
+  ↓
+Pipeline executes (from dev branch):
+  1. Quality checks (lint, test, e2e)
+  2. Docker image build
+  3. Trivy security scan
+  ↓
+If all checks pass:
+  4. Auto-merge dev → main
+  5. Move tag from dev to main (updated SHA)
+  6. Delete old tag from remote
+  7. Push updated tag to remote (now points to main)
+  8. Push images with semantic tags:
+     - ghcr.io/repo:v1.2.3
+     - ghcr.io/repo:1.2.3
+     - ghcr.io/repo:1.2
+     - ghcr.io/repo:1
+     - ghcr.io/repo:latest
+  9. Create GitHub Release with changelog
+  ↓
+If any check fails:
+  - Creates GitHub issue with failure details
+  - NO merge to main
+  - NO tag movement
+  - NO image push
+  - NO release creation
+```
 
 ### Architectural Decisions
+
+**Why Unified Workflow?**
+- Single source of truth for all CI/CD logic
+- Eliminates duplication between workflows
+- Consistent validation across all scenarios
+- Easier to maintain and debug
+- Reduces cognitive load for developers
+
+**Why Trunk-Based Development?**
+- Main branch always deployable and validated
+- Fast integration reduces merge conflicts
+- Continuous integration in practice, not just theory
+- Industry best practice for high-performing teams
+- Enables rapid feedback loops
+
+**Why Auto-merge from Dev?**
+- Enforces quality gates before main integration
+- Prevents manual merge errors
+- Guarantees main only contains validated code
+- Enables safe continuous deployment
+- Consistent merge history (no-ff strategy)
+
+**Why Move Tags After Validation?**
+- Releases must point to commits in main branch
+- Tags should reference production-ready code
+- Validation happens on feature branch, release from main
+- Ensures release integrity and traceability
+- Aligns with GitFlow release semantics
 
 **Why Semantic Versioning?**
 - Industry standard (semver.org)
 - Clear upgrade paths (major.minor.patch)
-- Multiple tags for flexibility
+- Multiple tags for flexibility (v1.2.3, v1.2, v1, latest)
 - Enables automated dependency updates
+- Docker image consumers can choose update strategy
+
+**Why Service Containers for Tests?**
+- Ephemeral MongoDB for e2e tests
+- No external dependencies required
+- Fast and isolated test environment
+- Test credentials never leave CI
+- Identical to production database version
+
+**Why Trivy Security Scanning?**
+- Free for public and private repositories
+- Native GitHub Actions integration
+- SARIF upload to Security tab
+- Scans both OS packages and dependencies
+- Configurable severity thresholds (CRITICAL, HIGH)
+- Fails build on vulnerabilities
 
 **Why Continue-on-Error Strategy?**
 - Runs all quality gates regardless of individual failures
-- Comprehensive failure reporting
-- Creates GitHub issues with full context
-- Developers don't need to check workflow logs
+- Comprehensive failure reporting in single issue
+- Developers see all problems, not just first failure
+- Artifacts uploaded even on failure (debugging)
+- Report job analyzes all outputs together
 
-**Why Service Containers?**
-- Ephemeral MongoDB for e2e tests
-- No external dependencies
-- Fast and isolated
-- Test credentials never leave CI
+### Quality Gates
 
-**Why Trivy Security Scanning?**
-- Free for public/private repos
-- Native GitHub Actions integration
-- SARIF upload to Security tab
-- Scans OS packages and dependencies
-- Configurable severity thresholds
+All quality checks must pass before merge or release:
+
+**Code Quality:**
+- ESLint with TypeScript strict rules
+- Exit code capture via pipefail
+- Output logged to artifacts
+
+**Unit Tests:**
+- Jest test suite with coverage
+- MongoDB service container
+- Failure blocks pipeline
+
+**E2E Tests:**
+- Full integration testing
+- Real database connections
+- API contract validation
+
+**Security Scanning:**
+- Trivy vulnerability scan
+- CRITICAL and HIGH severity fails build
+- SARIF upload to GitHub Security tab
+- Results visible in Security > Code Scanning
 
 ### Semantic Versioning Strategy
 
+Tag examples and resulting Docker images:
+
 ```
-git tag v1.0.0  →  Creates: v1.0.0, v1.0, v1, latest
-git push main   →  Creates: main-abc1234
+git tag v1.2.3  →  Creates:
+  - ghcr.io/repo:v1.2.3    (exact version with v prefix)
+  - ghcr.io/repo:1.2.3     (exact version)
+  - ghcr.io/repo:1.2       (receives patch updates)
+  - ghcr.io/repo:1         (receives minor and patch updates)
+  - ghcr.io/repo:latest    (always newest release)
+
+git push origin dev  →  Creates:
+  - ghcr.io/repo:main-abc1234  (commit-specific tag)
+  - ghcr.io/repo:latest        (unstable/development)
 ```
 
 Benefits:
-- `latest`: Always newest release
-- `v1`: Automatic minor/patch updates
-- `v1.0`: Automatic patch updates
-- `v1.0.0`: Pin to exact version
-
-### Security Scanning
-
-```yaml
-- Trivy scans: Docker image + dependencies
-- Severity: CRITICAL, HIGH (fails build)
-- Output: SARIF format
-- Upload: GitHub Security tab
-- Result: Visible in Security > Code Scanning
-```
+- Production can pin to exact version (v1.2.3)
+- Staging can auto-update patches (v1.2)
+- Development always uses latest
+- Rollback capability via versioned tags
 
 ### Automated Issue Creation
 
 Workflow failures automatically create GitHub issues with:
-- Deduplication (one issue per release)
-- Labels: ci-failure, blocks-production, test-failure, etc.
-- Complete failure context (logs, artifacts)
+
+**Issue Content:**
+- Complete lint error output
+- Unit test failure details
+- E2E test failure logs
+- Trivy vulnerability scan results
 - Links to failed workflow runs
+- Commit SHA and branch information
+
+**Issue Management:**
+- Labels: `ci-failure`, `automated`, `dev`
+- Created only on actual errors (not skipped jobs)
+- One issue per pipeline run
+- Automatic deduplication
+- Includes instructions for debugging
+
+**Error Detection Strategy:**
+- Downloads all artifacts (with continue-on-error)
+- Analyzes file contents for actual errors
+- Only creates issue if errors found in output
+- Prevents false positives from skipped jobs
+
+### Failure Handling
+
+**Exit Code Capture:**
+```bash
+set +e           # Don't exit on error
+set -o pipefail  # Capture exit code from first failed command in pipe
+
+pnpm run lint 2>&1 | tee lint-output.txt
+LINT_FAILED=$?   # Captures real exit code, not tee's exit code
+```
+
+**Artifact Upload:**
+```yaml
+- name: Upload test outputs
+  if: always()  # Upload artifacts even on failure
+  uses: actions/upload-artifact@v4
+```
+
+This ensures the Report Failures job can access outputs even when quality checks fail.
+
+### Branch Protection
+
+**Main Branch Protection:**
+- Managed via GitHub Rulesets (ID: 11900039)
+- Force push blocked
+- Branch deletion blocked
+- Bypass actors: GitHub Actions (for auto-merge)
+
+**Dev Branch:**
+- No protection rules
+- Developers push freely
+- CI validates all changes
+- Failures create issues but don't block commits
+
+This configuration enables trunk-based development while maintaining main branch integrity.
 
 ### Path Filtering
 
@@ -254,11 +418,13 @@ Workflows only trigger for relevant changes:
 
 ```yaml
 paths:
-  - 'src/**'          # Application code
-  - 'test/**'         # Tests
-  - 'Dockerfile'      # Container changes
-  - '.github/workflows/*.yml'  # Workflow changes
-# Terraform changes do NOT trigger app builds
+  - 'src/**'                    # Application code
+  - 'test/**'                   # Tests
+  - 'Dockerfile'                # Container changes
+  - '.github/workflows/*.yml'   # Workflow changes
+  - 'package.json'              # Dependencies
+  - 'pnpm-lock.yaml'            # Lock file
+# Terraform, docs, and k8s changes do NOT trigger app builds
 ```
 
 ---
