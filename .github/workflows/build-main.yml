@@ -53,17 +53,26 @@ jobs:
 
       - name: Run all quality checks
         id: quality
-        continue-on-error: true
         run: |
           # Run all checks and capture results (don't stop on failures)
+          LINT_FAILED=0
+          TEST_FAILED=0
+          E2E_FAILED=0
+
           echo "Running linter..."
-          pnpm run lint 2>&1 | tee lint-output.txt || true
+          pnpm run lint 2>&1 | tee lint-output.txt || LINT_FAILED=1
 
           echo "Running unit tests..."
-          pnpm run test 2>&1 | tee test-output.txt || true
+          pnpm run test 2>&1 | tee test-output.txt || TEST_FAILED=1
 
           echo "Running E2E tests..."
-          pnpm run test:e2e 2>&1 | tee e2e-output.txt || true
+          pnpm run test:e2e 2>&1 | tee e2e-output.txt || E2E_FAILED=1
+
+          # Fail job if any check failed (blocks PR merge)
+          if [ $LINT_FAILED -eq 1 ] || [ $TEST_FAILED -eq 1 ] || [ $E2E_FAILED -eq 1 ]; then
+            echo "::error::Quality checks failed - blocking merge"
+            exit 1
+          fi
         env:
           MONGODB_URI: mongodb://test:test@localhost:27017/tech_challenge?authSource=admin
 
@@ -156,13 +165,19 @@ jobs:
 
       - name: Run Trivy vulnerability scanner
         id: trivy
-        continue-on-error: true
         run: |
-          # Run Trivy and capture output (don't fail the job)
-          trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt || true
+          # Run Trivy and capture output
+          TRIVY_FAILED=0
+          trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt || TRIVY_FAILED=1
 
           # Also generate SARIF format
           trivy image --format sarif --output trivy-results.sarif --severity CRITICAL,HIGH ${{ fromJSON(steps.meta.outputs.json).tags[0] }} || true
+
+          # Fail job if vulnerabilities found (blocks PR merge)
+          if [ $TRIVY_FAILED -eq 1 ]; then
+            echo "::error::Security vulnerabilities found - blocking merge"
+            exit 1
+          fi
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
