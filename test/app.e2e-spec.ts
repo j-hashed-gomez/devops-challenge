@@ -27,6 +27,7 @@ describe('AppController (e2e)', () => {
       .expect((res) => {
         expect(res.body).toHaveProperty('request');
         expect(res.body).toHaveProperty('user_agent');
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         expect(res.body.request).toContain('[GET] /');
       });
   });
