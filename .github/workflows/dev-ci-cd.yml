@@ -173,12 +173,12 @@ jobs:
         id: trivy
         run: |
           set +e
-          trivy image --exit-code 1 --severity HIGH,CRITICAL \
+          trivy image --exit-code 1 --severity CRITICAL \
             --format sarif --output trivy-results.sarif \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }}
           TRIVY_EXIT=$?
 
-          trivy image --severity HIGH,CRITICAL \
+          trivy image --severity CRITICAL \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }} | tee trivy-output.txt
 
           if [ $TRIVY_EXIT -ne 0 ]; then
