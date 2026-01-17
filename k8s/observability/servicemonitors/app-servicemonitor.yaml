@@ -1,0 +1,42 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tech-challenge-app
+  namespace: monitoring
+  labels:
+    app: tech-challenge-app
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: tech-challenge-app
+  namespaceSelector:
+    matchNames:
+    - tech-challenge
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+    - sourceLabels: [__meta_kubernetes_pod_label_app]
+      targetLabel: app
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'http_request_duration_seconds.*'
+      action: keep
+    - sourceLabels: [__name__]
+      regex: 'http_requests_total.*'
+      action: keep
+    - sourceLabels: [__name__]
+      regex: 'process_.*'
+      action: keep
+    - sourceLabels: [__name__]
+      regex: 'nodejs_.*'
+      action: keep

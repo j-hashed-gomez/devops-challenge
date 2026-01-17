@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tech-challenge-dev
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: tech-challenge
+
+  source:
+    repoURL: https://github.com/j-hashed-gomez/devops-challenge.git
+    targetRevision: dev  # Deploy from dev branch
+    path: k8s/overlays/development
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tech-challenge-dev
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+    - CreateNamespace=true
+    - PrunePropagationPolicy=foreground
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/replicas
+
+  revisionHistoryLimit: 5

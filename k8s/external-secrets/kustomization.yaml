@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: external-secrets-system
+
+resources:
+  - namespace.yaml
+  - cluster-secretstore.yaml
+  - mongodb-externalsecret.yaml
+
+# Note: ServiceAccount will be created by eksctl with IRSA annotations
+# The serviceaccount.yaml is provided as reference only
