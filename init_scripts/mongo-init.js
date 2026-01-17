@@ -1,4 +1,4 @@
-db = db.getSiblingDB('modify_me_accordignly');
+db = db.getSiblingDB('tech_challenge');
 db.createCollection('visits');
 db.visits.insertMany([
   {

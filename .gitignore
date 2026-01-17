@@ -48,3 +48,17 @@ Thumbs.db
 *.mov
 *.wmv
 
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Docker volumes
+mongodb_data/
+
+# Coverage
+coverage/
+*.lcov
+
+# Build artifacts
+build/
