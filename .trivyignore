@@ -1,0 +1,23 @@
+# Trivy Ignore List
+# This file contains CVEs that are intentionally ignored during security scanning
+
+# CVE-2026-0861: glibc - Integer overflow in memalign leads to heap corruption
+# Severity: HIGH
+# Component: libc6 (glibc)
+# Affected Version: 2.36-9+deb12u13 (Debian 12 Bookworm)
+# Status: No patch available
+#
+# Justification for ignoring:
+# - Debian security team has classified this as a MINOR issue (<no-dsa>)
+# - No Debian Security Advisory (DSA) will be issued for Debian 12 Bookworm
+# - Fix only available in Debian Trixie/Testing (glibc 2.42-8)
+# - Upstream bug: https://sourceware.org/bugzilla/show_bug.cgi?id=33796
+# - Risk assessment: Edge case requiring specific alignment parameters
+# - Production impact: Minimal
+# - Decision: Safe to deploy until patched base image becomes available
+#
+# Reference: http://www.mail-archive.com/debian-security-tracker-commits@alioth-lists.debian.net/msg72280.html
+# Date ignored: 2026-01-17
+# Review date: 2026-02-17 (re-evaluate monthly for updated base images)
+
+CVE-2026-0861
