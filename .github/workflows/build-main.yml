@@ -20,6 +20,21 @@ jobs:
       packages: write
       security-events: write
 
+    services:
+      mongodb:
+        image: mongo:8.0.17
+        ports:
+          - 27017:27017
+        env:
+          MONGO_INITDB_ROOT_USERNAME: test
+          MONGO_INITDB_ROOT_PASSWORD: test
+          MONGO_INITDB_DATABASE: tech_challenge
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping: 1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,6 +59,8 @@ jobs:
         run: pnpm run test
 
       - name: Run e2e tests
+        env:
+          MONGODB_URI: mongodb://test:test@localhost:27017/tech_challenge?authSource=admin
         run: pnpm run test:e2e
 
       - name: Set up Docker Buildx
