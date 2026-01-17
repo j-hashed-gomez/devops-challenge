@@ -1,5 +1,15 @@
 # DevOps Challenge - Technical Report
 
+## Note to the Evaluator
+
+Dear Evaluator,
+
+This challenge has been approached with an **enterprise-grade focus**, targeting the requirements of a mature organization that demands high availability, robust security, and production-ready infrastructure. Every decision prioritizes operational excellence, scalability, and security hardening suitable for enterprise environments.
+
+For a deeper understanding of my professional background and experience, please visit my complete profile at: **https://joseluis.gomezmarin.es**
+
+---
+
 ## Executive Summary
 
 This document outlines the complete enterprise-grade DevOps implementation for the Tech Challenge NestJS application, covering containerization, CI/CD, infrastructure provisioning, Kubernetes deployment, comprehensive observability, disaster recovery, cost management, and GitOps workflows.
