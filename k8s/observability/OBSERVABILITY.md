@@ -1,8 +1,8 @@
 # Observability Stack Overview
 
-This directory contains two complementary observability solutions for the Tech Challenge application:
+This directory contains three observability solutions for the Tech Challenge application:
 
-## 1. Prometheus + Grafana (Metrics)
+## 1. Prometheus + Grafana (Metrics) - Required
 
 **Purpose**: Real-time metrics collection and visualization
 
@@ -10,7 +10,7 @@ This directory contains two complementary observability solutions for the Tech C
 
 **Components**:
 - Prometheus: Time-series database for metrics
-- Grafana: Visualization and dashboards
+- Grafana: Visualization and dashboards (with persistent storage)
 - AlertManager: Alert routing and notifications
 - Node Exporter: Node-level metrics
 - MongoDB Exporter: Database metrics
@@ -28,25 +28,71 @@ This directory contains two complementary observability solutions for the Tech C
 - SLA tracking
 - Real-time alerting
 
-**Installation**: See `README.md` in main observability directory
+**Installation**: See main `README.md`
 
-## 2. ELK Stack (Logging)
+**Status**: Deployed with persistent storage (10Gi for Grafana)
 
-**Purpose**: Centralized log aggregation and analysis
+## 2. Loki Stack (Lightweight Logging) - Recommended
+
+**Purpose**: Cost-effective log aggregation with Grafana integration
+
+**Location**: `k8s/observability/loki/`
+
+**Components**:
+- Loki: Label-based log aggregation
+- Promtail: Log collection from all pods (DaemonSet)
+- Grafana: Same UI for logs + metrics (already deployed)
+
+**Features**:
+- 30-day retention with auto-compaction
+- 10x compression (50Gi stores ~500Gi of logs)
+- Native Grafana integration
+- Label-based indexing (much lighter than full-text)
+- Automatic log cleanup every 10 minutes
+
+**Logs Collected**:
+- Application logs from all containers
+- Kubernetes metadata (namespace, pod, labels)
+- JSON log parsing
+- Filtered to exclude kube-system
+
+**Use Cases**:
+- Debugging and troubleshooting
+- Quick log searches by labels
+- Correlation with metrics in Grafana
+- Cost-effective logging
+
+**Installation**: See `loki/README.md`
+
+**Resource Usage**: ~300m CPU, 640Mi-1.13Gi memory, 50Gi storage
+
+## 3. ELK Stack (Full-Text Logging) - Optional
+
+**Purpose**: Advanced log analysis with full-text search
 
 **Location**: `k8s/observability/elk/`
 
 **Components**:
-- Elasticsearch: Log storage and search engine
-- Logstash: Log processing pipeline
-- Kibana: Log exploration and visualization
-- Filebeat: Log collection from all pods
+- Elasticsearch: Full-text search engine
+- Logstash: Complex log processing
+- Kibana: Dedicated log UI
+- Filebeat: Log collection
 
 **Logs Collected**:
-- Application logs from all containers
-- System logs
-- Kubernetes events
-- Enriched with pod/namespace metadata
+- All application and system logs
+- Full-text indexed
+- Complex transformations
+- Enriched metadata
+
+**Use Cases**:
+- Compliance and auditing
+- Deep log analysis
+- Full-text search across logs
+- High-volume log processing
+
+**Installation**: See `elk/README.md`
+
+**Resource Usage**: ~900m-2000m CPU, 2.2-4.7Gi memory, 35Gi storage
 
 **Use Cases**:
 - Debugging and troubleshooting
@@ -56,17 +102,30 @@ This directory contains two complementary observability solutions for the Tech C
 
 **Installation**: See `elk/README.md`
 
-## Why Both?
+## Choosing Your Logging Solution
 
-**Metrics (Prometheus)** and **Logs (ELK)** serve different purposes:
+| Feature | Loki | ELK |
+|---------|------|-----|
+| **Indexing** | Labels only | Full-text |
+| **Storage** | 50Gi (30 days) | 30Gi (30 days) |
+| **Resource** | ~640Mi memory | ~2.5Gi memory |
+| **Cost** | Low ($50/month) | High ($150/month) |
+| **Grafana Integration** | Native | External |
+| **Query Speed** | Fast (label-based) | Fast (full-text) |
+| **Complexity** | Simple | Complex |
+| **Best For** | General debugging | Compliance/audit |
+
+## Why Metrics + Logs?
+
+**Metrics (Prometheus)** and **Logs (Loki/ELK)** serve different purposes:
 
 | Aspect | Metrics | Logs |
 |--------|---------|------|
 | **Data Type** | Numerical time-series | Text events |
 | **Question** | "How much?" "How fast?" | "What happened?" "Why?" |
 | **Storage** | Efficient, aggregated | Verbose, detailed |
-| **Query** | Mathematical operations | Full-text search |
-| **Retention** | 15 days (default) | 30 days (default) |
+| **Query** | Mathematical operations | Text search |
+| **Retention** | 15 days | 30 days |
 | **Use Case** | Monitoring, alerting | Debugging, auditing |
 
 ### Examples
@@ -83,25 +142,37 @@ This directory contains two complementary observability solutions for the Tech C
 
 ## Recommended Setup
 
-### Development
-- Prometheus + Grafana (lighter, faster feedback)
+### Development / Testing
+- **Prometheus + Grafana** (required for metrics)
+- **Loki** (optional, lightweight logs)
 
-### Production
-- **Both stacks** for complete observability
-- Metrics for monitoring and alerting
-- Logs for debugging and compliance
+### Production (Cost-Conscious)
+- **Prometheus + Grafana** (metrics and alerting)
+- **Loki** (logs for 30 days, 60-70% cheaper than ELK)
+
+### Production (Compliance/Enterprise)
+- **Prometheus + Grafana** (metrics)
+- **Loki** (recent logs, 7-30 days)
+- **ELK** (compliance logs, 90+ days retention)
 
 ## Resource Requirements
 
-### Prometheus Stack
+### Prometheus Stack (Required)
 - Prometheus: 200m-1000m CPU, 512Mi-2Gi memory, 20Gi storage
-- Grafana: 100m-500m CPU, 256Mi-512Mi memory, 10Gi storage
+- Grafana: 100m-500m CPU, 256Mi-512Mi memory, 10Gi storage (persistent)
 - AlertManager: 50m-200m CPU, 128Mi-256Mi memory, 5Gi storage
 - Exporters: 50m-200m CPU each, 64Mi-128Mi memory each
 
 **Total**: ~600m-2000m CPU, ~1.5Gi-4Gi memory, ~40Gi storage
 
-### ELK Stack
+### Loki Stack (Recommended for Logging)
+- Loki: 200m-1000m CPU, 512Mi-1Gi memory, 50Gi storage
+- Promtail: 100m-200m CPU per node, 128Mi-256Mi memory per node
+- Grafana: Shared with Prometheus (no additional cost)
+
+**Total**: ~300m-1200m CPU, ~640Mi-1.26Gi memory, ~50Gi storage
+
+### ELK Stack (Optional, for Compliance)
 - Elasticsearch: 500m-1000m CPU, 1-2Gi memory, 30Gi storage
 - Logstash: 200m-500m CPU, 512Mi-1Gi memory, 5Gi storage
 - Kibana: 200m-500m CPU, 512Mi-1Gi memory
@@ -109,10 +180,25 @@ This directory contains two complementary observability solutions for the Tech C
 
 **Total**: ~1000m-2500m CPU, ~2.5Gi-5Gi memory, ~35Gi storage
 
-### Combined Total
-- **CPU**: 1.6-4.5 cores
-- **Memory**: 4-9Gi
-- **Storage**: 75Gi
+### Setup Comparisons
+
+**Prometheus + Loki (Recommended)**:
+- **CPU**: ~900m-3200m (0.9-3.2 cores)
+- **Memory**: ~2.14Gi-5.26Gi
+- **Storage**: ~90Gi
+- **Cost**: ~$120/month
+
+**Prometheus + ELK**:
+- **CPU**: ~1600m-4500m (1.6-4.5 cores)
+- **Memory**: ~4-9Gi
+- **Storage**: ~75Gi
+- **Cost**: ~$230/month
+
+**All Three**:
+- **CPU**: ~1900m-5700m (1.9-5.7 cores)
+- **Memory**: ~4.64Gi-10.26Gi
+- **Storage**: ~125Gi
+- **Cost**: ~$280/month
 
 ## Cost Optimization
 
