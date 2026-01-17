@@ -48,22 +48,40 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run linter
-        id: lint
-        continue-on-error: true
-        run: pnpm run lint 2>&1 | tee lint-output.txt
+      - name: Run all quality checks
+        id: quality
+        run: |
+          # Run all checks and capture results
+          LINT_FAILED=0
+          TEST_FAILED=0
+          E2E_FAILED=0
 
-      - name: Run unit tests
-        id: test
-        continue-on-error: true
-        run: pnpm run test 2>&1 | tee test-output.txt
+          echo "Running linter..."
+          pnpm run lint 2>&1 | tee lint-output.txt || LINT_FAILED=1
 
-      - name: Run E2E tests
-        id: e2e
-        continue-on-error: true
+          echo "Running unit tests..."
+          pnpm run test 2>&1 | tee test-output.txt || TEST_FAILED=1
+
+          echo "Running E2E tests..."
+          pnpm run test:e2e 2>&1 | tee e2e-output.txt || E2E_FAILED=1
+
+          # Report results
+          if [ $LINT_FAILED -eq 1 ]; then
+            echo "::error::Linter failed"
+          fi
+          if [ $TEST_FAILED -eq 1 ]; then
+            echo "::error::Unit tests failed"
+          fi
+          if [ $E2E_FAILED -eq 1 ]; then
+            echo "::error::E2E tests failed"
+          fi
+
+          # Fail if any check failed
+          if [ $LINT_FAILED -eq 1 ] || [ $TEST_FAILED -eq 1 ] || [ $E2E_FAILED -eq 1 ]; then
+            exit 1
+          fi
         env:
           MONGODB_URI: mongodb://test:test@localhost:27017/tech_challenge?authSource=admin
-        run: pnpm run test:e2e 2>&1 | tee e2e-output.txt
 
       - name: Upload test outputs
         if: always()
@@ -75,15 +93,6 @@ jobs:
             test-output.txt
             e2e-output.txt
           retention-days: 7
-
-      - name: Fail if quality checks failed
-        if: steps.lint.outcome == 'failure' || steps.test.outcome == 'failure' || steps.e2e.outcome == 'failure'
-        run: |
-          echo "::error::Quality checks failed"
-          echo "Lint: ${{ steps.lint.outcome }}"
-          echo "Tests: ${{ steps.test.outcome }}"
-          echo "E2E: ${{ steps.e2e.outcome }}"
-          exit 1
 
   build-image:
     name: Build Docker Image
@@ -163,13 +172,19 @@ jobs:
 
       - name: Run Trivy vulnerability scanner
         id: trivy
-        continue-on-error: true
         run: |
           # Run Trivy and capture output
-          trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt
+          TRIVY_FAILED=0
+          trivy image --severity CRITICAL,HIGH --exit-code 1 ${{ fromJSON(steps.meta.outputs.json).tags[0] }} 2>&1 | tee trivy-output.txt || TRIVY_FAILED=1
 
           # Also generate SARIF format (without exit code check)
           trivy image --format sarif --output trivy-results.sarif --severity CRITICAL,HIGH ${{ fromJSON(steps.meta.outputs.json).tags[0] }} || true
+
+          # Fail if vulnerabilities found
+          if [ $TRIVY_FAILED -eq 1 ]; then
+            echo "::error::Security vulnerabilities found"
+            exit 1
+          fi
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
@@ -184,12 +199,6 @@ jobs:
           name: trivy-output
           path: trivy-output.txt
           retention-days: 7
-
-      - name: Fail if vulnerabilities found
-        if: steps.trivy.outcome == 'failure'
-        run: |
-          echo "::error::Security vulnerabilities found"
-          exit 1
 
   push-image:
     name: Push to Registry
