@@ -9,8 +9,8 @@ export class HealthController {
   @Get()
   check() {
     const dbState = this.connection.readyState;
-    const CONNECTED_STATE: number = 1;
-    const isHealthy = dbState === CONNECTED_STATE;
+    // Using number() to ensure type compatibility with readyState
+    const isHealthy = Number(dbState) === 1;
 
     return {
       status: isHealthy ? 'healthy' : 'unhealthy',
