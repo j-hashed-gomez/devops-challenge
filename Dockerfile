@@ -1,5 +1,5 @@
 # Stage 1: Dependencies
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ RUN corepack enable && \
     pnpm install --frozen-lockfile --prod
 
 # Stage 2: Build
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -31,7 +31,7 @@ COPY . .
 RUN pnpm run build
 
 # Stage 3: Production runtime with distroless
-FROM gcr.io/distroless/nodejs20-debian12:nonroot
+FROM gcr.io/distroless/nodejs22-debian12:nonroot
 
 WORKDIR /app
 
