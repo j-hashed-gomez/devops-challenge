@@ -34,7 +34,7 @@ describe('AppController', () => {
         socket: { remoteAddress: '127.0.0.1' },
         get: jest.fn().mockReturnValue('test-agent'),
         query: {},
-      } as unknown as Express.Request;
+      } as any;
 
       const result = await appController.visitorInfo(mockRequest);
 
@@ -42,6 +42,7 @@ describe('AppController', () => {
         request: '[GET] /',
         user_agent: 'test-agent',
       });
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(visitsService.create).toHaveBeenCalled();
     });
   });
