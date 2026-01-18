@@ -47,8 +47,6 @@ spec:
         env:
         - name: PORT
           value: "3000"
-        - name: MONGODB_URI
-          value: mongodb://$(MONGO_USERNAME):$(MONGO_PASSWORD)@mongodb.tech-challenge.svc.cluster.local:27017/tech_challenge?authSource=admin
         - name: MONGO_USERNAME
           valueFrom:
             secretKeyRef:
@@ -59,6 +57,14 @@ spec:
             secretKeyRef:
               name: mongodb-secret
               key: password
+        - name: MONGO_HOST
+          value: mongodb.tech-challenge.svc.cluster.local
+        - name: MONGO_PORT
+          value: "27017"
+        - name: MONGO_DATABASE
+          value: tech_challenge
+        - name: MONGO_AUTH_SOURCE
+          value: admin
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
