@@ -1,5 +1,6 @@
 terraform {
-  required_version = ">= 1.10.0"
+  required_version = ">= 1.5.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -9,28 +10,34 @@ terraform {
 }
 
 provider "aws" {
-  region = var.region
+  region  = var.aws_region
+  profile = var.aws_profile
 
   default_tags {
     tags = {
       Project     = "devops-challenge"
       ManagedBy   = "terraform"
-      Environment = "shared"
-      Purpose     = "terraform-state-backend"
+      Environment = "backend"
+      Purpose     = "terraform-state-storage"
     }
   }
 }
 
-# S3 bucket for Terraform state
+# S3 Bucket for Terraform State
 resource "aws_s3_bucket" "terraform_state" {
   bucket = var.state_bucket_name
 
   lifecycle {
     prevent_destroy = true
   }
+
+  tags = {
+    Name        = "Terraform State Bucket"
+    Description = "Stores Terraform state files for devops-challenge infrastructure"
+  }
 }
 
-# Enable versioning for state history and recovery
+# Enable versioning for state file recovery
 resource "aws_s3_bucket_versioning" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
 
@@ -39,7 +46,7 @@ resource "aws_s3_bucket_versioning" "terraform_state" {
   }
 }
 
-# Enable server-side encryption by default
+# Enable server-side encryption
 resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
 
@@ -50,7 +57,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" 
   }
 }
 
-# Block all public access
+# Block public access
 resource "aws_s3_bucket_public_access_block" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
 
@@ -60,32 +67,25 @@ resource "aws_s3_bucket_public_access_block" "terraform_state" {
   restrict_public_buckets = true
 }
 
-# Enable lifecycle policy to manage old versions
+# Enable bucket lifecycle policy for cost optimization
 resource "aws_s3_bucket_lifecycle_configuration" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
 
   rule {
-    id     = "delete-old-versions"
+    id     = "expire-old-versions"
     status = "Enabled"
+
+    filter {}
 
     noncurrent_version_expiration {
       noncurrent_days = 90
     }
   }
-
-  rule {
-    id     = "abort-incomplete-uploads"
-    status = "Enabled"
-
-    abort_incomplete_multipart_upload {
-      days_after_initiation = 7
-    }
-  }
 }
 
-# DynamoDB table for state locking
+# DynamoDB Table for State Locking
 resource "aws_dynamodb_table" "terraform_locks" {
-  name         = var.dynamodb_table_name
+  name         = var.lock_table_name
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "LockID"
 
@@ -104,5 +104,10 @@ resource "aws_dynamodb_table" "terraform_locks" {
 
   lifecycle {
     prevent_destroy = true
+  }
+
+  tags = {
+    Name        = "Terraform State Lock Table"
+    Description = "Prevents concurrent Terraform operations and state corruption"
   }
 }
