@@ -1,0 +1,224 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+spec:
+  project: default
+  source:
+    chart: kube-prometheus-stack
+    repoURL: https://prometheus-community.github.io/helm-charts
+    targetRevision: 65.0.0
+    helm:
+      releaseName: kube-prometheus-stack
+      values: |
+        # Prometheus configuration
+        prometheus:
+          prometheusSpec:
+            retention: 15d
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 20Gi
+            resources:
+              requests:
+                cpu: 200m
+                memory: 512Mi
+              limits:
+                cpu: 1000m
+                memory: 2Gi
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+
+          service:
+            type: ClusterIP
+            port: 9090
+
+        # Grafana configuration with auto-provisioned dashboards
+        grafana:
+          enabled: true
+          adminPassword: admin
+
+          sidecar:
+            dashboards:
+              enabled: true
+              label: grafana_dashboard
+              folder: /tmp/dashboards
+              searchNamespace: observability
+
+          service:
+            type: LoadBalancer
+            port: 80
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          persistence:
+            enabled: true
+            size: 10Gi
+
+          # Datasources configuration
+          datasources:
+            datasources.yaml:
+              apiVersion: 1
+              datasources:
+              - name: Prometheus
+                type: prometheus
+                url: http://kube-prometheus-stack-prometheus.observability:9090
+                access: proxy
+                isDefault: true
+              - name: Loki
+                type: loki
+                url: http://loki.observability:3100
+                access: proxy
+                isDefault: false
+
+          # Auto-provision dashboards
+          dashboardProviders:
+            dashboardproviders.yaml:
+              apiVersion: 1
+              providers:
+              - name: 'default'
+                orgId: 1
+                folder: ''
+                type: file
+                disableDeletion: false
+                editable: true
+                options:
+                  path: /var/lib/grafana/dashboards/default
+              - name: 'kubernetes'
+                orgId: 1
+                folder: 'Kubernetes'
+                type: file
+                disableDeletion: false
+                editable: true
+                options:
+                  path: /var/lib/grafana/dashboards/kubernetes
+              - name: 'application'
+                orgId: 1
+                folder: 'Application'
+                type: file
+                disableDeletion: false
+                editable: true
+                options:
+                  path: /var/lib/grafana/dashboards/application
+              - name: 'sidecar'
+                orgId: 1
+                folder: 'Logs'
+                type: file
+                disableDeletion: false
+                editable: true
+                options:
+                  path: /tmp/dashboards
+
+          dashboards:
+            default:
+              prometheus-stats:
+                gnetId: 2
+                revision: 2
+                datasource: Prometheus
+
+            kubernetes:
+              # Cluster monitoring dashboard
+              k8s-cluster-monitoring:
+                gnetId: 7249
+                revision: 1
+                datasource: Prometheus
+
+              # Node exporter full
+              node-exporter:
+                gnetId: 1860
+                revision: 31
+                datasource: Prometheus
+
+              # Kubernetes cluster monitoring
+              k8s-system-api-server:
+                gnetId: 15761
+                revision: 16
+                datasource: Prometheus
+
+              # Pods monitoring
+              k8s-pods:
+                gnetId: 6417
+                revision: 1
+                datasource: Prometheus
+
+            application:
+              # MongoDB monitoring
+              mongodb:
+                gnetId: 2583
+                revision: 2
+                datasource: Prometheus
+
+              # ArgoCD monitoring
+              argocd:
+                gnetId: 14584
+                revision: 1
+                datasource: Prometheus
+
+              # Loki logs dashboard
+              loki-logs:
+                gnetId: 12611
+                revision: 1
+                datasource: Loki
+
+        # Alertmanager configuration
+        alertmanager:
+          alertmanagerSpec:
+            storage:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 5Gi
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 200m
+                memory: 256Mi
+
+        # Node exporter
+        nodeExporter:
+          enabled: true
+
+        # Kube-state-metrics
+        kubeStateMetrics:
+          enabled: true
+
+        # Disable components we don't need
+        coreDns:
+          enabled: true
+        kubeDns:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeProxy:
+          enabled: true
+        kubeControllerManager:
+          enabled: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
