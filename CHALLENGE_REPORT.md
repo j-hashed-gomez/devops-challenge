@@ -2136,26 +2136,498 @@ This challenge demonstrated both roles for educational purposes, but production 
 
 ---
 
-### Phase 3: Infrastructure Provisioning - PENDING
+### Phase 3: Infrastructure Provisioning - COMPLETED
 
-**Status:** Ready to deploy. Terraform code validated and tested.
+**Status:** Terraform infrastructure deployment successfully completed.
 
-**Components to Deploy:**
-- S3 bucket for Terraform state (with versioning, encryption)
-- DynamoDB table for state locking
-- VPC with 3 public and 3 private subnets across 3 AZs
-- EKS cluster (Kubernetes 1.33) with managed node groups
-- EKS Connect API enabled for secure kubectl access
+**Deployment Time:** ~15 minutes total
+**Total Resources Created:** 43
 
-**Estimated Time:** 25 minutes
-- Backend setup: 2 minutes
-- VPC provisioning: 3 minutes
-- EKS cluster creation: 20 minutes
+**Deployment Architecture:**
 
-**Evidence to Capture:**
-- Terraform apply outputs
-- AWS Console screenshots (S3, DynamoDB, VPC, EKS)
-- kubectl get nodes output
+This phase implements a production-grade infrastructure-as-code approach with:
+1. **Terraform Backend Setup** (Bootstrap phase)
+2. **Main Infrastructure** (VPC, EKS, Networking, OIDC)
+
+#### 3.1 Terraform Backend Setup - COMPLETED
+
+**Purpose:** Establish secure remote state management before deploying main infrastructure.
+
+**Components Deployed:**
+- S3 Bucket: `devops-challenge-terraform-state-jhg` (eu-west-1)
+  - Versioning: Enabled (state file recovery)
+  - Encryption: AES256 server-side encryption
+  - Public Access: Fully blocked
+  - Lifecycle Policy: Expire old versions after 90 days
+  - Prevent Destroy: Enabled
+
+- DynamoDB Table: `devops-challenge-terraform-locks`
+  - Billing Mode: PAY_PER_REQUEST (cost-optimized)
+  - Hash Key: `LockID` (required by Terraform)
+  - Point-in-Time Recovery: Enabled
+  - Server-Side Encryption: Enabled
+  - Prevent Destroy: Enabled
+
+**Security Measures:**
+- No credentials in code (AWS profile authentication)
+- Backend configuration via separate `backend.hcl` file (gitignored)
+- Comprehensive `.gitignore` for Terraform secrets (`.tfvars`, `.tfstate`, `.terraform/`)
+- All sensitive files excluded from version control
+
+**Deployment Time:** 56 seconds
+
+**Terraform Output:**
+```
+Plan: 6 to add, 0 to change, 0 to destroy
+Apply complete! Resources: 6 added, 0 changed, 0 destroyed
+
+Outputs:
+s3_bucket_name = "devops-challenge-terraform-state-jhg"
+s3_bucket_arn = "arn:aws:s3:::devops-challenge-terraform-state-jhg"
+dynamodb_table_name = "devops-challenge-terraform-locks"
+dynamodb_table_arn = "arn:aws:dynamodb:eu-west-1:054431466060:table/devops-challenge-terraform-locks"
+```
+
+**State Locking Validation:**
+- Remote backend initialized successfully
+- State lock acquired and released during plan operation
+- Concurrent access protection verified
+
+#### 3.2 Main Infrastructure Deployment - COMPLETED
+
+**Status:** All infrastructure resources deployed and validated successfully.
+
+**Infrastructure Specification:**
+
+**Region:** eu-west-1 (Ireland)
+
+**Networking (Multi-AZ for High Availability):**
+- VPC: `vpc-0022d569422e85979` (CIDR: 10.0.0.0/16)
+- Internet Gateway: Created and attached
+- Availability Zones: 3 (eu-west-1a, eu-west-1b, eu-west-1c)
+
+**Subnets:**
+- Public Subnets: 3 (one per AZ, /24 each)
+  - subnet-0a44bc9da5de7b439 (eu-west-1a): 10.0.0.0/24
+  - subnet-0ead5760f20423f45 (eu-west-1b): 10.0.1.0/24
+  - subnet-0f98b212f89d90549 (eu-west-1c): 10.0.2.0/24
+
+- Private Subnets: 3 (one per AZ, /24 each)
+  - subnet-0c1c15192870ad472 (eu-west-1a): 10.0.10.0/24
+  - subnet-026135c871967b409 (eu-west-1b): 10.0.11.0/24
+  - subnet-0d8f5b2d3bde1bc52 (eu-west-1c): 10.0.12.0/24
+
+**NAT Gateways (HA Configuration):**
+- 3 NAT Gateways (one per AZ for fault tolerance)
+- All NAT Gateways: **available**
+  - nat-016caa89366dfe601 (eu-west-1a): 3.254.30.95
+  - nat-08e99732ed0c068b2 (eu-west-1b): 54.216.58.231
+  - nat-0d29484f25440c751 (eu-west-1c): 54.228.60.145
+
+**EKS Cluster Configuration:**
+- Cluster Name: `devops-challenge-eks`
+- Kubernetes Version: **1.33** (latest stable)
+- Server Version: v1.33.7-eks-ac2d5a0
+- Status: **ACTIVE**
+- Endpoint: `https://A003771485763EC026AC6EAFCC2E88D6.gr7.eu-west-1.eks.amazonaws.com`
+- Control Plane: Managed by AWS EKS
+- Endpoint Access: Public + Private (secure access)
+- Created: 2026-01-18T10:27:51Z
+
+**EKS Node Group:**
+- Node Group Name: `devops-challenge-eks-node-group`
+- Instance Type: `t3.medium` (2 vCPU, 4 GiB RAM)
+- Capacity Type: ON_DEMAND
+- Status: **ACTIVE**
+- Min Nodes: 2
+- Max Nodes: 3
+- Desired Nodes: 2
+- Disk Size: 20 GB per node
+- Deployment: Multi-AZ across private subnets
+- OS Image: Amazon Linux 2023.10.20260105
+- Kernel: 6.12.63-84.121.amzn2023.x86_64
+- Container Runtime: containerd 2.1.5
+
+**Active Nodes:**
+```
+NAME                                        STATUS   VERSION
+ip-10-0-10-252.eu-west-1.compute.internal   Ready    v1.33.5-eks-ecaa3a6
+ip-10-0-11-222.eu-west-1.compute.internal   Ready    v1.33.5-eks-ecaa3a6
+```
+
+**Instance Type Selection Rationale:**
+
+For this technical challenge, `t3.medium` instances were chosen to minimize AWS costs while demonstrating infrastructure deployment capabilities. However, this choice comes with an important production consideration:
+
+**Challenge Environment (Current):**
+- Instance Family: T3 (Burstable Performance)
+- Reasoning: Cost-effective for demonstration purposes (~$0.0416/hour in eu-west-1)
+- Acceptable for: Short-lived testing, proof-of-concept deployments
+
+**Production Environment (Recommended):**
+- Instance Family: C6i, C6a, or M6i (Non-Burstable)
+- Reasoning: Predictable, sustained performance without CPU credit constraints
+- Required for: Production workloads requiring consistent performance
+
+**Why Burstable Instances Are Unsuitable for Production:**
+
+Burstable instances (T-family) use a CPU credit system that can lead to:
+1. Performance degradation under sustained load when credits are exhausted
+2. Unpredictable latency spikes during high-traffic periods
+3. Degraded application responsiveness affecting user experience
+4. Difficulty in capacity planning and SLA guarantees
+
+**Production-Grade Alternatives:**
+- `c6i.large` or `c6i.xlarge`: Compute-optimized for CPU-intensive workloads
+- `m6i.large` or `m6i.xlarge`: General-purpose for balanced compute/memory workloads
+- `c6a.large` (AMD-based): Cost-effective alternative with consistent performance
+
+This architectural decision reflects real-world DevOps considerations: balancing cost optimization for non-production environments while maintaining strict performance requirements for production deployments.
+
+**IAM Roles & Policies:**
+- EKS Cluster Role: `devops-challenge-eks-cluster-role`
+  - AmazonEKSClusterPolicy
+  - AmazonEKSVPCResourceController
+
+- EKS Node Group Role: `devops-challenge-eks-node-group-role`
+  - ARN: `arn:aws:iam::054431466060:role/devops-challenge-eks-node-group-role`
+  - AmazonEKSWorkerNodePolicy
+  - AmazonEKS_CNI_Policy
+  - AmazonEC2ContainerRegistryReadOnly
+  - AmazonEBSCSIDriverPolicy
+
+- **EBS CSI Driver Role (IRSA):** `devops-challenge-eks-ebs-csi-driver-role`
+  - ARN: `arn:aws:iam::054431466060:role/devops-challenge-eks-ebs-csi-driver-role`
+  - Trust Policy: AssumeRoleWithWebIdentity via OIDC
+  - Service Account: `system:serviceaccount:kube-system:ebs-csi-controller-sa`
+  - Policy: AmazonEBSCSIDriverPolicy
+
+**OIDC Provider (IAM Roles for Service Accounts):**
+- Provider ARN: `arn:aws:iam::054431466060:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/A003771485763EC026AC6EAFCC2E88D6`
+- Audience: `sts.amazonaws.com`
+- Status: **Active**
+- Purpose: Secure AWS IAM authentication for Kubernetes pods
+
+**Security Groups:**
+- EKS Cluster SG: `sg-0b7b6dbfd1cbde95f`
+- EKS Nodes SG: Auto-managed by EKS
+
+**EKS Add-ons - ALL OPERATIONAL:**
+- **vpc-cni** (AWS VPC networking): 2/2 pods Running
+- **coredns** (DNS service): 2/2 pods Running
+- **kube-proxy** (Network proxy): 2/2 pods Running (DaemonSet)
+- **aws-ebs-csi-driver** (Persistent storage): 4/4 pods Running
+  - Controller: 2/2 pods (6 containers each)
+  - Node: 2/2 pods (3 containers each, DaemonSet)
+  - IAM Role: Configured via IRSA (OIDC provider)
+
+**System Pods Health Check:**
+```
+NAMESPACE     NAME                                 READY   STATUS    RESTARTS
+kube-system   aws-node-p5c8j                       2/2     Running   0
+kube-system   aws-node-rv7m4                       2/2     Running   0
+kube-system   coredns-5d49645d49-9sfln             1/1     Running   0
+kube-system   coredns-5d49645d49-h84pg             1/1     Running   0
+kube-system   ebs-csi-controller-5c49b8787-csm6k   6/6     Running   0
+kube-system   ebs-csi-controller-5c49b8787-pqxzk   6/6     Running   0
+kube-system   ebs-csi-node-f5bb9                   3/3     Running   0
+kube-system   ebs-csi-node-wljml                   3/3     Running   0
+kube-system   kube-proxy-tnprq                     1/1     Running   0
+kube-system   kube-proxy-twwkx                     1/1     Running   0
+```
+
+**Total:** 10/10 pods Running, 0 restarts
+
+**Terraform Apply Summary:**
+```
+Plan: 43 resources to add, 0 to change, 0 to destroy
+Apply complete! Resources: 43 added, 0 changed, 0 destroyed
+```
+
+**Resources Breakdown:**
+- **IAM Resources:** 8 (3 roles + 5 policy attachments)
+- **VPC Networking:** 20 (VPC, subnets, route tables, IGW, NAT GWs, EIPs)
+- **Security Groups:** 1 (EKS cluster)
+- **EKS Resources:** 6 (cluster, node group, 4 add-ons)
+- **OIDC Provider:** 1
+- **Data Sources:** 7
+
+**Terraform Outputs:**
+```hcl
+configure_kubectl = "aws eks update-kubeconfig --region eu-west-1 --name devops-challenge-eks --profile personal-aws"
+eks_cluster_endpoint = "https://A003771485763EC026AC6EAFCC2E88D6.gr7.eu-west-1.eks.amazonaws.com"
+eks_cluster_id = "devops-challenge-eks"
+eks_cluster_security_group_id = "sg-0b7b6dbfd1cbde95f"
+eks_cluster_version = "1.33"
+eks_node_group_id = "devops-challenge-eks:devops-challenge-eks-node-group"
+eks_node_group_status = "ACTIVE"
+private_subnet_ids = [
+  "subnet-0c1c15192870ad472",
+  "subnet-026135c871967b409",
+  "subnet-0d8f5b2d3bde1bc52",
+]
+public_subnet_ids = [
+  "subnet-0a44bc9da5de7b439",
+  "subnet-0ead5760f20423f45",
+  "subnet-0f98b212f89d90549",
+]
+region = "eu-west-1"
+vpc_id = "vpc-0022d569422e85979"
+```
+
+**Production-Ready Features:**
+- Multi-AZ deployment for high availability (3 availability zones)
+- Separate public/private subnets (security best practice)
+- NAT Gateways in each AZ (no single point of failure)
+- Remote state with locking (prevents concurrent modifications)
+- OIDC provider for secure IAM integration (IRSA)
+- EBS CSI driver with dedicated IAM role
+- Comprehensive tagging (Project, Environment, ManagedBy)
+- All worker nodes in private subnets only
+- No public IPs on worker nodes
+
+**Validation Results:**
+
+**Cluster Accessibility:**
+```bash
+$ kubectl get nodes
+NAME                                        STATUS   ROLES    AGE
+ip-10-0-10-252.eu-west-1.compute.internal   Ready    <none>   7m37s
+ip-10-0-11-222.eu-west-1.compute.internal   Ready    <none>   7m37s
+```
+
+**EBS CSI Driver Verification:**
+```bash
+$ kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
+NAME                                 READY   STATUS    RESTARTS   AGE
+ebs-csi-controller-5c49b8787-csm6k   6/6     Running   0          6m41s
+ebs-csi-controller-5c49b8787-pqxzk   6/6     Running   0          6m41s
+ebs-csi-node-f5bb9                   3/3     Running   0          6m41s
+ebs-csi-node-wljml                   3/3     Running   0          6m41s
+```
+
+**OIDC Provider Verification:**
+```bash
+$ aws iam list-open-id-connect-providers --profile personal-aws
+{
+    "OpenIDConnectProviderList": [
+        {
+            "Arn": "arn:aws:iam::054431466060:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/A003771485763EC026AC6EAFCC2E88D6"
+        }
+    ]
+}
+```
+
+**Cost Estimate (Monthly):**
+- EKS Cluster: ~$73/month
+- 2x t3.medium nodes: ~$60/month (24/7)
+- 3x NAT Gateways: ~$100/month
+- S3 + DynamoDB: <$5/month
+- **Total: ~$238/month**
+
+**Deployment Evidence:**
+Complete deployment evidence report available at: `/tmp/terraform-deployment-evidence.md`
+
+#### 3.3 Deployment Guide - Step-by-Step
+
+This guide provides the exact commands used to deploy the infrastructure. All commands assume you have:
+- AWS CLI configured with `personal-aws` profile
+- Terraform >= 1.6.0 installed
+- Appropriate AWS credentials and permissions
+
+**Step 1: Deploy Backend Infrastructure (State Management)**
+
+```bash
+# Navigate to backend setup directory
+cd terraform/backend-setup
+
+# Create terraform.tfvars file with your configuration
+cat > terraform.tfvars <<EOF
+aws_region    = "eu-west-1"
+aws_profile   = "personal-aws"
+project_name  = "devops-challenge"
+environment   = "production"
+bucket_suffix = "jhg"  # Add unique suffix to ensure globally unique bucket name
+EOF
+
+# Initialize Terraform
+terraform init
+
+# Review the plan
+terraform plan
+
+# Deploy backend infrastructure
+terraform apply -auto-approve
+```
+
+**Expected Output:**
+```
+Apply complete! Resources: 6 added, 0 changed, 0 destroyed.
+
+Outputs:
+dynamodb_table_arn = "arn:aws:dynamodb:eu-west-1:054431466060:table/devops-challenge-terraform-locks"
+dynamodb_table_name = "devops-challenge-terraform-locks"
+s3_bucket_arn = "arn:aws:s3:::devops-challenge-terraform-state-jhg"
+s3_bucket_name = "devops-challenge-terraform-state-jhg"
+```
+
+**Deployment Time:** ~1 minute
+
+**Step 2: Configure Backend for Main Infrastructure**
+
+```bash
+# Navigate to main infrastructure directory
+cd ../infrastructure
+
+# Create backend.hcl file (this file is gitignored)
+cat > backend.hcl <<EOF
+bucket         = "devops-challenge-terraform-state-jhg"
+key            = "infrastructure/terraform.tfstate"
+region         = "eu-west-1"
+encrypt        = true
+dynamodb_table = "devops-challenge-terraform-locks"
+profile        = "personal-aws"
+EOF
+
+# Create terraform.tfvars file (this file is gitignored)
+cat > terraform.tfvars <<EOF
+aws_region  = "eu-west-1"
+aws_profile = "personal-aws"
+
+project_name = "devops-challenge"
+environment  = "production"
+
+vpc_cidr                 = "10.0.0.0/16"
+availability_zones_count = 3
+
+cluster_name             = "devops-challenge-eks"
+cluster_version          = "1.33"
+node_instance_type       = "t3.medium"
+node_group_min_size      = 2
+node_group_max_size      = 3
+node_group_desired_size  = 2
+EOF
+```
+
+**Step 3: Deploy Main Infrastructure**
+
+```bash
+# Initialize Terraform with backend configuration
+terraform init -backend-config=backend.hcl
+
+# Review the execution plan
+terraform plan
+
+# Deploy infrastructure (this will take ~15 minutes)
+terraform apply -auto-approve
+```
+
+**Expected Output:**
+```
+Apply complete! Resources: 43 added, 0 changed, 0 destroyed.
+
+Outputs:
+configure_kubectl = "aws eks update-kubeconfig --region eu-west-1 --name devops-challenge-eks --profile personal-aws"
+eks_cluster_endpoint = "https://A003771485763EC026AC6EAFCC2E88D6.gr7.eu-west-1.eks.amazonaws.com"
+eks_cluster_id = "devops-challenge-eks"
+eks_cluster_security_group_id = "sg-0b7b6dbfd1cbde95f"
+eks_cluster_version = "1.33"
+eks_node_group_id = "devops-challenge-eks:devops-challenge-eks-node-group"
+eks_node_group_status = "ACTIVE"
+private_subnet_ids = [
+  "subnet-0c1c15192870ad472",
+  "subnet-026135c871967b409",
+  "subnet-0d8f5b2d3bde1bc52",
+]
+public_subnet_ids = [
+  "subnet-0a44bc9da5de7b439",
+  "subnet-0ead5760f20423f45",
+  "subnet-0f98b212f89d90549",
+]
+region = "eu-west-1"
+vpc_id = "vpc-0022d569422e85979"
+```
+
+**Deployment Time:** ~15 minutes
+
+**Step 4: Configure kubectl Access**
+
+```bash
+# Configure kubectl to access the EKS cluster
+aws eks update-kubeconfig \
+  --region eu-west-1 \
+  --name devops-challenge-eks \
+  --profile personal-aws
+
+# Verify cluster access
+kubectl get nodes
+
+# Expected output:
+# NAME                                        STATUS   ROLES    AGE
+# ip-10-0-10-252.eu-west-1.compute.internal   Ready    <none>   Xm
+# ip-10-0-11-222.eu-west-1.compute.internal   Ready    <none>   Xm
+```
+
+**Step 5: Verify Infrastructure Deployment**
+
+```bash
+# Check all system pods are running
+kubectl get pods -n kube-system
+
+# Expected: 10/10 pods Running
+
+# Verify EBS CSI driver (required for StatefulSets)
+kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
+
+# Expected: 4 pods Running (2 controllers + 2 node pods)
+
+# Verify OIDC provider
+aws iam list-open-id-connect-providers --profile personal-aws
+
+# Expected: OIDC provider ARN for the EKS cluster
+
+# Verify IAM role for EBS CSI driver
+aws iam get-role \
+  --role-name devops-challenge-eks-ebs-csi-driver-role \
+  --profile personal-aws
+
+# Expected: Role with AssumeRoleWithWebIdentity trust policy
+```
+
+**Step 6: View Terraform Outputs**
+
+```bash
+# Display all infrastructure outputs
+terraform output
+
+# Get specific output values
+terraform output eks_cluster_endpoint
+terraform output vpc_id
+terraform output private_subnet_ids
+```
+
+**Total Deployment Time:** ~16 minutes (1 min backend + 15 min infrastructure)
+
+**Resources Created:** 49 total (6 backend + 43 infrastructure)
+
+#### 3.4 Infrastructure Cleanup (Optional)
+
+To destroy the infrastructure and avoid ongoing AWS costs:
+
+```bash
+# Destroy main infrastructure
+cd terraform/infrastructure
+terraform destroy -auto-approve
+
+# Destroy backend (only if you want to remove state storage)
+cd ../backend-setup
+terraform destroy -auto-approve
+```
+
+**Important Notes:**
+- Destroying the backend will delete your Terraform state files
+- Always destroy main infrastructure before destroying backend
+- Estimated time: ~10 minutes for main infrastructure
 
 ---
 

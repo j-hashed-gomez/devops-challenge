@@ -1,0 +1,20 @@
+# Copy this file to terraform.tfvars and adjust values as needed
+# NEVER commit terraform.tfvars to version control
+
+aws_region  = "eu-west-1"
+aws_profile = "your-aws-profile"
+
+project_name = "devops-challenge"
+environment  = "production"
+
+# VPC Configuration
+vpc_cidr                 = "10.0.0.0/16"
+availability_zones_count = 3
+
+# EKS Configuration
+cluster_name             = "devops-challenge-eks"
+cluster_version          = "1.31"
+node_instance_type       = "c6i.medium"
+node_group_min_size      = 2
+node_group_max_size      = 3
+node_group_desired_size  = 2
