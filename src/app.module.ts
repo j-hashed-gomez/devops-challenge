@@ -10,12 +10,26 @@ import { VisitsModule } from './visits/visits.module';
     ConfigModule.forRoot(),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        uri: configService.get<string>(
-          'MONGODB_URI',
-          'mongodb://localhost:27017/tech_challenge',
-        ),
-      }),
+      useFactory: (configService: ConfigService) => {
+        // Support both MONGODB_URI and individual env vars
+        const mongodbUri = configService.get<string>('MONGODB_URI');
+        if (mongodbUri) {
+          return { uri: mongodbUri };
+        }
+
+        // Build URI from individual components
+        const username = configService.get<string>('MONGO_USERNAME', '');
+        const password = configService.get<string>('MONGO_PASSWORD', '');
+        const host = configService.get<string>('MONGO_HOST', 'localhost');
+        const port = configService.get<string>('MONGO_PORT', '27017');
+        const database = configService.get<string>('MONGO_DATABASE', 'tech_challenge');
+        const authSource = configService.get<string>('MONGO_AUTH_SOURCE', 'admin');
+
+        const credentials = username && password ? `${username}:${password}@` : '';
+        const uri = `mongodb://${credentials}${host}:${port}/${database}?authSource=${authSource}`;
+
+        return { uri };
+      },
       inject: [ConfigService],
     }),
     VisitsModule,
