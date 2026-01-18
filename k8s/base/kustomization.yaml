@@ -6,7 +6,6 @@ namespace: tech-challenge
 resources:
   - namespace.yaml
   - mongodb-configmap.yaml
-  - cluster-secretstore.yaml
   - mongodb-external-secret.yaml
   - mongodb-statefulset.yaml
   - mongodb-service.yaml
