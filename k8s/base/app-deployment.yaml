@@ -38,8 +38,8 @@ spec:
           type: RuntimeDefault
       containers:
       - name: app
-        image: ghcr.io/j-hashed-gomez/devops-challenge:latest
-        imagePullPolicy: Always
+        image: ghcr.io/j-hashed-gomez/devops-challenge:v1.2.0
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
           name: http
