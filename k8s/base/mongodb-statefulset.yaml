@@ -37,11 +37,6 @@ spec:
               key: password
         - name: MONGO_INITDB_DATABASE
           value: tech_challenge
-        command:
-        - mongod
-        - --bind_ip_all
-        - --networkMessageCompressors
-        - snappy
         volumeMounts:
         - name: mongodb-data
           mountPath: /data/db
