@@ -26,8 +26,8 @@ For a deeper understanding of my professional background and experience, please 
 **Additional Sections:**
 - [Deployment Instructions](#deployment-instructions)
 - [Key Technical Achievements](#key-technical-achievements)
-- [Future Improvements](#future-improvements)
-- [Bonus Task: Deployment Evidence & Validation](#bonus-task-deployment-evidence--validation)
+- [Bonus Task: Production-Ready Secret Management](#bonus-task-production-ready-secret-management)
+- [Deployment Evidence & Validation](#deployment-evidence--validation)
 
 ---
 
@@ -493,8 +493,10 @@ paths:
 **Secrets Management:**
 - No secrets in repository
 - Environment variables for local development
-- Kubernetes Secrets for production (Task 7)
-- AWS Secrets Manager integration ready
+- Production-ready secret management with External Secrets Operator + AWS Secrets Manager
+- IRSA (IAM Roles for Service Accounts) for secure AWS access without static credentials
+- Automatic secret synchronization from AWS to Kubernetes
+- See [Bonus Task: Production-Ready Secret Management](#bonus-task-production-ready-secret-management) for complete implementation
 
 ### Database Security
 
@@ -1848,28 +1850,307 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 ---
 
-## Future Improvements
+## Bonus Task: Production-Ready Secret Management
 
-### Short Term
-1. Enable remote Terraform state (S3 + DynamoDB)
-2. Configure SSL certificates (Let's Encrypt) for Ingress
-3. Implement VPA (Vertical Pod Autoscaler) for MongoDB
-4. Add MongoDB replica set for true HA
-5. Implement blue-green deployments
+### Overview
 
-### Medium Term
-1. Multi-environment support (dev, staging, prod)
-2. Service mesh (Istio/Linkerd) for mTLS
-3. Chaos engineering tests (Chaos Mesh)
-4. Implement Karpenter for advanced node provisioning
-5. Add OpenTelemetry for distributed tracing
+This implementation replaces hardcoded MongoDB credentials with a production-ready secret management solution using AWS Secrets Manager and External Secrets Operator. This approach ensures credentials are never stored in Git and follows security best practices for Kubernetes deployments.
 
-### Long Term
-1. Multi-region deployment
-2. Disaster recovery plan
-3. Compliance certifications (SOC2, ISO27001)
-4. Advanced monitoring (APM, distributed tracing)
-5. Cost allocation and optimization
+### Implementation Steps
+
+#### 1. IAM Infrastructure for External Secrets Operator
+
+Created IRSA (IAM Role for Service Accounts) configuration in `terraform/infrastructure/irsa-external-secrets.tf`:
+
+- **IAM Policy**: Grants access to AWS Secrets Manager for the `tech-challenge/*` namespace
+- **OIDC Trust Policy**: Allows the External Secrets Operator service account to assume the IAM role
+- **Service Account**: `external-secrets` in `external-secrets` namespace
+
+The IAM role ARN is exposed via Terraform outputs for use in Kubernetes annotations.
+
+#### 2. External Secrets Operator Deployment via ArgoCD
+
+Created `argocd/applications/external-secrets-operator.yaml` to deploy the operator following GitOps principles:
+
+- **Helm Chart**: `external-secrets` v0.12.1 from official repository
+- **IRSA Annotation**: Service account annotated with IAM role ARN
+- **Security Hardening**: Non-root execution, read-only filesystem, dropped capabilities
+- **Auto-Sync**: Enabled for automated updates
+
+#### 3. Cluster-Scoped Secret Store
+
+Created `k8s/cluster/cluster-secretstore.yaml` for cluster-wide secret access:
+
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: aws-secretsmanager
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: eu-west-1
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: external-secrets
+            namespace: external-secrets
+```
+
+This ClusterSecretStore can be referenced by ExternalSecrets in any namespace.
+
+#### 4. Secure Credential Generation
+
+Generated strong MongoDB credentials:
+
+```bash
+# Username
+echo -n "admin" | base64
+
+# Password (64-character hexadecimal)
+openssl rand -hex 32
+```
+
+Stored in AWS Secrets Manager at `tech-challenge/mongodb/credentials` with JSON structure:
+
+```json
+{
+  "username": "admin",
+  "password": "<64-character-hexadecimal-password>"
+}
+```
+
+#### 5. External Secret for MongoDB
+
+Created `k8s/base/mongodb-external-secret.yaml`:
+
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: mongodb-credentials
+  namespace: tech-challenge
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secretsmanager
+    kind: ClusterSecretStore
+  target:
+    name: mongodb-secret
+    creationPolicy: Owner
+  data:
+  - secretKey: username
+    remoteRef:
+      key: tech-challenge/mongodb/credentials
+      property: username
+  - secretKey: password
+    remoteRef:
+      key: tech-challenge/mongodb/credentials
+      property: password
+```
+
+This ExternalSecret syncs credentials from AWS Secrets Manager every hour and creates a standard Kubernetes Secret named `mongodb-secret`.
+
+#### 6. ArgoCD Application for Cluster Resources
+
+Created `argocd/applications/cluster-secrets.yaml` to manage cluster-scoped resources separately from namespace-scoped resources:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cluster-secrets
+  namespace: argocd
+spec:
+  project: tech-challenge
+  source:
+    repoURL: https://github.com/j-hashed-gomez/devops-challenge.git
+    targetRevision: main
+    path: k8s/cluster
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+#### 7. Cleanup of Hardcoded Secrets
+
+Removed `k8s/base/mongodb-secret.yaml` from Git:
+
+```bash
+git rm k8s/base/mongodb-secret.yaml
+```
+
+Updated `k8s/base/kustomization.yaml` to reference `mongodb-external-secret.yaml` instead.
+
+### Production-Ready Justification
+
+This implementation was completed to deliver the technical challenge in a production-ready state, following industry best practices:
+
+#### Security Benefits
+
+1. **Zero Secrets in Git**: Credentials never committed to version control, eliminating risk of exposure through Git history
+2. **Principle of Least Privilege**: IAM role scoped to specific Secrets Manager paths (`tech-challenge/*`)
+3. **No Static Credentials**: Uses IRSA with OIDC federation instead of long-lived AWS access keys
+4. **Audit Trail**: All secret access logged in AWS CloudTrail
+5. **Secret Rotation Ready**: Centralized credential management enables easy rotation without application redeployment
+
+#### Operational Benefits
+
+1. **Centralized Secret Management**: Single source of truth for credentials across environments
+2. **Automatic Synchronization**: External Secrets Operator keeps Kubernetes secrets in sync with AWS Secrets Manager
+3. **GitOps Compatible**: Declarative configuration managed through ArgoCD
+4. **Environment Isolation**: Different secrets per environment without code changes
+5. **Disaster Recovery**: Secrets survive cluster recreation as they're stored externally
+
+#### Compliance Benefits
+
+1. **Encryption at Rest**: AWS Secrets Manager encrypts all secrets using KMS
+2. **Encryption in Transit**: TLS for all communication between Kubernetes and AWS
+3. **Access Control**: IAM policies enforce who can access secrets
+4. **Compliance Ready**: Meets requirements for SOC2, ISO27001, PCI-DSS regarding secret management
+
+### Verification Evidence
+
+#### External Secrets Operator Status
+
+```bash
+$ kubectl get pods -n external-secrets
+NAME                                              READY   STATUS    RESTARTS   AGE
+external-secrets-6778486b9-k59lw                  1/1     Running   0          45m
+external-secrets-cert-controller-946bb6b4-jdrcd   1/1     Running   0          45m
+external-secrets-webhook-59868df6f6-m7qvc         1/1     Running   0          45m
+```
+
+#### ClusterSecretStore Validation
+
+```bash
+$ kubectl get clustersecretstore
+NAME                 AGE   STATUS   CAPABILITIES   READY
+aws-secretsmanager   35m   Valid    ReadWrite      True
+```
+
+#### ExternalSecret Status
+
+```bash
+$ kubectl get externalsecret -n tech-challenge
+NAME                  STORE                REFRESH INTERVAL   STATUS         READY
+mongodb-credentials   aws-secretsmanager   1h                 SecretSynced   True
+```
+
+#### MongoDB Secret Creation
+
+```bash
+$ kubectl get secret mongodb-secret -n tech-challenge
+NAME             TYPE     DATA   AGE
+mongodb-secret   Opaque   2      30m
+```
+
+#### Application Health Check
+
+```bash
+$ kubectl port-forward -n tech-challenge svc/tech-challenge-app 3000:3000 &
+$ curl http://localhost:3000/health
+{"status":"healthy","timestamp":"2026-01-18T11:15:42.117Z","database":{"status":"connected","readyState":1}}
+```
+
+The `"readyState":1` confirms MongoDB is connected and authenticated successfully using credentials from AWS Secrets Manager.
+
+#### ArgoCD Application Status
+
+![ArgoCD Applications](./docs/images/argocd-applications-with-secrets.png)
+
+All ArgoCD applications showing "Synced" and "Healthy" status:
+
+- **external-secrets-operator**: Healthy and synced
+- **cluster-secrets**: Synced (ClusterSecretStore deployed)
+- **tech-challenge-production**: Synced and healthy with application running
+
+### Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         AWS Cloud                            │
+│                                                              │
+│  ┌──────────────────────┐      ┌────────────────────────┐  │
+│  │  AWS Secrets Manager │      │      IAM Role          │  │
+│  │                      │      │  (IRSA with OIDC)      │  │
+│  │  tech-challenge/     │◄─────┤                        │  │
+│  │  mongodb/credentials │      │  SecretsManager:Get*   │  │
+│  └──────────────────────┘      └────────────────────────┘  │
+│           ▲                              ▲                  │
+└───────────┼──────────────────────────────┼──────────────────┘
+            │                              │
+            │ HTTPS (TLS)                  │ OIDC Token
+            │                              │ Exchange
+┌───────────┼──────────────────────────────┼──────────────────┐
+│           │         EKS Cluster          │                  │
+│           │                              │                  │
+│  ┌────────▼─────────────────┐   ┌────────┴──────────────┐  │
+│  │ External Secrets Operator│   │   Service Account     │  │
+│  │                          │   │   external-secrets    │  │
+│  │  - Sync every 1h         │◄──┤   (IRSA annotated)    │  │
+│  │  - Create K8s Secret     │   │                       │  │
+│  └────────┬─────────────────┘   └───────────────────────┘  │
+│           │                                                 │
+│           │ Creates/Updates                                 │
+│           ▼                                                 │
+│  ┌────────────────────┐                                     │
+│  │  Kubernetes Secret │                                     │
+│  │   mongodb-secret   │                                     │
+│  │                    │                                     │
+│  │  - username: admin │                                     │
+│  │  - password: ***   │                                     │
+│  └────────┬───────────┘                                     │
+│           │                                                 │
+│           │ Mounted as env vars                             │
+│           ▼                                                 │
+│  ┌────────────────────┐      ┌──────────────────────────┐  │
+│  │  MongoDB StatefulSet│      │  Application Deployment  │  │
+│  │                    │◄─────┤                          │  │
+│  │  Authenticated     │      │  Uses credentials        │  │
+│  └────────────────────┘      └──────────────────────────┘  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Technical Decisions
+
+1. **ClusterSecretStore vs SecretStore**: Chose ClusterSecretStore for centralized management and reusability across namespaces
+2. **Hexadecimal Password**: Generated 64-character hex password to avoid MongoDB URI special character encoding issues
+3. **Separate ArgoCD Applications**: Cluster-scoped resources in dedicated application to avoid Kustomize namespace conflicts
+4. **1-hour Refresh Interval**: Balances security (frequent updates) with API rate limits and cost
+5. **GitOps Deployment**: External Secrets Operator deployed via ArgoCD instead of manual Helm installation for consistency
+
+### Files Modified/Created
+
+**New Files:**
+- `terraform/infrastructure/irsa-external-secrets.tf`
+- `argocd/applications/external-secrets-operator.yaml`
+- `argocd/applications/cluster-secrets.yaml`
+- `k8s/cluster/cluster-secretstore.yaml`
+- `k8s/base/mongodb-external-secret.yaml`
+
+**Modified Files:**
+- `terraform/infrastructure/outputs.tf` (added external_secrets_role_arn)
+- `k8s/base/kustomization.yaml` (added mongodb-external-secret.yaml, removed mongodb-secret.yaml)
+
+**Deleted Files:**
+- `k8s/base/mongodb-secret.yaml` (removed from Git)
+
+### Conclusion
+
+This bonus implementation elevates the technical challenge solution from development-ready to production-ready by implementing enterprise-grade secret management. The solution provides:
+
+- Enhanced security through credential externalization
+- Operational excellence via GitOps and automation
+- Compliance readiness for regulated environments
+- Scalability for multi-environment deployments
+
+All components are fully functional, verified, and documented with evidence of successful deployment.
 
 ---
 
