@@ -2428,6 +2428,207 @@ $ aws iam list-open-id-connect-providers --profile personal-aws
 **Deployment Evidence:**
 Complete deployment evidence report available at: `/tmp/terraform-deployment-evidence.md`
 
+#### 3.3 Deployment Guide - Step-by-Step
+
+This guide provides the exact commands used to deploy the infrastructure. All commands assume you have:
+- AWS CLI configured with `personal-aws` profile
+- Terraform >= 1.6.0 installed
+- Appropriate AWS credentials and permissions
+
+**Step 1: Deploy Backend Infrastructure (State Management)**
+
+```bash
+# Navigate to backend setup directory
+cd terraform/backend-setup
+
+# Create terraform.tfvars file with your configuration
+cat > terraform.tfvars <<EOF
+aws_region    = "eu-west-1"
+aws_profile   = "personal-aws"
+project_name  = "devops-challenge"
+environment   = "production"
+bucket_suffix = "jhg"  # Add unique suffix to ensure globally unique bucket name
+EOF
+
+# Initialize Terraform
+terraform init
+
+# Review the plan
+terraform plan
+
+# Deploy backend infrastructure
+terraform apply -auto-approve
+```
+
+**Expected Output:**
+```
+Apply complete! Resources: 6 added, 0 changed, 0 destroyed.
+
+Outputs:
+dynamodb_table_arn = "arn:aws:dynamodb:eu-west-1:054431466060:table/devops-challenge-terraform-locks"
+dynamodb_table_name = "devops-challenge-terraform-locks"
+s3_bucket_arn = "arn:aws:s3:::devops-challenge-terraform-state-jhg"
+s3_bucket_name = "devops-challenge-terraform-state-jhg"
+```
+
+**Deployment Time:** ~1 minute
+
+**Step 2: Configure Backend for Main Infrastructure**
+
+```bash
+# Navigate to main infrastructure directory
+cd ../infrastructure
+
+# Create backend.hcl file (this file is gitignored)
+cat > backend.hcl <<EOF
+bucket         = "devops-challenge-terraform-state-jhg"
+key            = "infrastructure/terraform.tfstate"
+region         = "eu-west-1"
+encrypt        = true
+dynamodb_table = "devops-challenge-terraform-locks"
+profile        = "personal-aws"
+EOF
+
+# Create terraform.tfvars file (this file is gitignored)
+cat > terraform.tfvars <<EOF
+aws_region  = "eu-west-1"
+aws_profile = "personal-aws"
+
+project_name = "devops-challenge"
+environment  = "production"
+
+vpc_cidr                 = "10.0.0.0/16"
+availability_zones_count = 3
+
+cluster_name             = "devops-challenge-eks"
+cluster_version          = "1.33"
+node_instance_type       = "t3.medium"
+node_group_min_size      = 2
+node_group_max_size      = 3
+node_group_desired_size  = 2
+EOF
+```
+
+**Step 3: Deploy Main Infrastructure**
+
+```bash
+# Initialize Terraform with backend configuration
+terraform init -backend-config=backend.hcl
+
+# Review the execution plan
+terraform plan
+
+# Deploy infrastructure (this will take ~15 minutes)
+terraform apply -auto-approve
+```
+
+**Expected Output:**
+```
+Apply complete! Resources: 43 added, 0 changed, 0 destroyed.
+
+Outputs:
+configure_kubectl = "aws eks update-kubeconfig --region eu-west-1 --name devops-challenge-eks --profile personal-aws"
+eks_cluster_endpoint = "https://A003771485763EC026AC6EAFCC2E88D6.gr7.eu-west-1.eks.amazonaws.com"
+eks_cluster_id = "devops-challenge-eks"
+eks_cluster_security_group_id = "sg-0b7b6dbfd1cbde95f"
+eks_cluster_version = "1.33"
+eks_node_group_id = "devops-challenge-eks:devops-challenge-eks-node-group"
+eks_node_group_status = "ACTIVE"
+private_subnet_ids = [
+  "subnet-0c1c15192870ad472",
+  "subnet-026135c871967b409",
+  "subnet-0d8f5b2d3bde1bc52",
+]
+public_subnet_ids = [
+  "subnet-0a44bc9da5de7b439",
+  "subnet-0ead5760f20423f45",
+  "subnet-0f98b212f89d90549",
+]
+region = "eu-west-1"
+vpc_id = "vpc-0022d569422e85979"
+```
+
+**Deployment Time:** ~15 minutes
+
+**Step 4: Configure kubectl Access**
+
+```bash
+# Configure kubectl to access the EKS cluster
+aws eks update-kubeconfig \
+  --region eu-west-1 \
+  --name devops-challenge-eks \
+  --profile personal-aws
+
+# Verify cluster access
+kubectl get nodes
+
+# Expected output:
+# NAME                                        STATUS   ROLES    AGE
+# ip-10-0-10-252.eu-west-1.compute.internal   Ready    <none>   Xm
+# ip-10-0-11-222.eu-west-1.compute.internal   Ready    <none>   Xm
+```
+
+**Step 5: Verify Infrastructure Deployment**
+
+```bash
+# Check all system pods are running
+kubectl get pods -n kube-system
+
+# Expected: 10/10 pods Running
+
+# Verify EBS CSI driver (required for StatefulSets)
+kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
+
+# Expected: 4 pods Running (2 controllers + 2 node pods)
+
+# Verify OIDC provider
+aws iam list-open-id-connect-providers --profile personal-aws
+
+# Expected: OIDC provider ARN for the EKS cluster
+
+# Verify IAM role for EBS CSI driver
+aws iam get-role \
+  --role-name devops-challenge-eks-ebs-csi-driver-role \
+  --profile personal-aws
+
+# Expected: Role with AssumeRoleWithWebIdentity trust policy
+```
+
+**Step 6: View Terraform Outputs**
+
+```bash
+# Display all infrastructure outputs
+terraform output
+
+# Get specific output values
+terraform output eks_cluster_endpoint
+terraform output vpc_id
+terraform output private_subnet_ids
+```
+
+**Total Deployment Time:** ~16 minutes (1 min backend + 15 min infrastructure)
+
+**Resources Created:** 49 total (6 backend + 43 infrastructure)
+
+#### 3.4 Infrastructure Cleanup (Optional)
+
+To destroy the infrastructure and avoid ongoing AWS costs:
+
+```bash
+# Destroy main infrastructure
+cd terraform/infrastructure
+terraform destroy -auto-approve
+
+# Destroy backend (only if you want to remove state storage)
+cd ../backend-setup
+terraform destroy -auto-approve
+```
+
+**Important Notes:**
+- Destroying the backend will delete your Terraform state files
+- Always destroy main infrastructure before destroying backend
+- Estimated time: ~10 minutes for main infrastructure
+
 ---
 
 ### Phase 4: Kubernetes Deployment - PENDING
