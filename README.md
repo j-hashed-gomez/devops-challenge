@@ -93,6 +93,12 @@ kubectl apply -f k8s/cluster/
 
 #### 6. Deploy Infrastructure Applications via ArgoCD
 ```bash
+# Deploy Traefik Ingress Controller first
+kubectl apply -f argocd/applications/traefik.yaml
+
+# Wait for Traefik to be ready
+kubectl wait --for=condition=available --timeout=300s deployment/traefik -n traefik
+
 # Deploy infrastructure applications (External Secrets, Autoscaler, Monitoring)
 kubectl apply -f argocd/applications/external-secrets-operator.yaml
 kubectl apply -f argocd/applications/cluster-secrets.yaml
@@ -116,11 +122,14 @@ kubectl get pods -n tech-challenge
 
 #### 8. Access the Application
 ```bash
-# Get the LoadBalancer URL
-kubectl get svc -n tech-challenge
+# Get the Traefik LoadBalancer URL (AWS NLB)
+kubectl get svc traefik -n traefik
+
+# Access the application via the LoadBalancer
+# The LoadBalancer will route traffic to the application based on Ingress rules
 
 # Or port-forward for local access
-kubectl port-forward svc/tech-challenge -n tech-challenge 3000:80
+kubectl port-forward svc/tech-challenge-app -n tech-challenge 3000:80
 ```
 
 #### 9. Access Monitoring (Optional)
@@ -142,8 +151,15 @@ kubectl get nodes
 # Check all ArgoCD applications
 kubectl get applications -n argocd
 
+# Check Traefik ingress controller
+kubectl get pods -n traefik
+kubectl get svc traefik -n traefik
+
 # Check application pods
 kubectl get pods -n tech-challenge
+
+# Check ingress resources
+kubectl get ingress -n tech-challenge
 
 # Check monitoring stack
 kubectl get pods -n monitoring

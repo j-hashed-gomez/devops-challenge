@@ -1,0 +1,232 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    chart: traefik
+    repoURL: https://traefik.github.io/charts
+    targetRevision: 38.0.2
+    helm:
+      releaseName: traefik
+      valueFiles:
+        - values.yaml
+      values: |
+        # Global options
+        globalArguments:
+          - "--global.checknewversion=false"
+          - "--global.sendanonymoususage=false"
+
+        # Deployment configuration
+        deployment:
+          enabled: true
+          kind: Deployment
+          replicas: 2
+          podAnnotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/port: "9100"
+            prometheus.io/path: "/metrics"
+
+        # Pod Disruption Budget
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 1
+
+        # Resource management
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+
+        # Security context
+        securityContext:
+          capabilities:
+            drop: [ALL]
+            add: [NET_BIND_SERVICE]
+          readOnlyRootFilesystem: true
+          runAsGroup: 65532
+          runAsNonRoot: true
+          runAsUser: 65532
+
+        podSecurityContext:
+          fsGroup: 65532
+          fsGroupChangePolicy: "OnRootMismatch"
+
+        # Autoscaling
+        autoscaling:
+          enabled: true
+          minReplicas: 2
+          maxReplicas: 10
+          metrics:
+            - type: Resource
+              resource:
+                name: cpu
+                target:
+                  type: Utilization
+                  averageUtilization: 70
+            - type: Resource
+              resource:
+                name: memory
+                target:
+                  type: Utilization
+                  averageUtilization: 80
+
+        # Service configuration
+        service:
+          enabled: true
+          type: LoadBalancer
+          annotations:
+            service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+            service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+            service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+            service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "60"
+          spec:
+            externalTrafficPolicy: Local
+
+        # Entry points
+        ports:
+          web:
+            port: 80
+            expose: true
+            exposedPort: 80
+            protocol: TCP
+            redirectTo:
+              port: websecure
+              priority: 10
+          websecure:
+            port: 443
+            expose: true
+            exposedPort: 443
+            protocol: TCP
+            http3:
+              enabled: false
+            tls:
+              enabled: true
+          metrics:
+            port: 9100
+            expose: false
+            protocol: TCP
+
+        # Logs
+        logs:
+          general:
+            level: INFO
+          access:
+            enabled: true
+            format: json
+            fields:
+              general:
+                defaultmode: keep
+              headers:
+                defaultmode: drop
+
+        # Metrics
+        metrics:
+          prometheus:
+            enabled: true
+            addEntryPointsLabels: true
+            addRoutersLabels: true
+            addServicesLabels: true
+            entryPoint: metrics
+            service:
+              enabled: true
+
+        # Health checks
+        readinessProbe:
+          failureThreshold: 1
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 2
+
+        livenessProbe:
+          failureThreshold: 3
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 2
+
+        # Providers
+        providers:
+          kubernetesCRD:
+            enabled: true
+            allowCrossNamespace: true
+            allowExternalNameServices: true
+          kubernetesIngress:
+            enabled: true
+            allowExternalNameServices: true
+            publishedService:
+              enabled: true
+
+        # Additional configuration
+        ingressRoute:
+          dashboard:
+            enabled: false
+
+        # Persistence for acme certificates
+        persistence:
+          enabled: true
+          name: traefik-certs
+          accessMode: ReadWriteOnce
+          size: 1Gi
+          storageClass: "gp3"
+          path: /data
+          annotations: {}
+
+        # Node selection and tolerations
+        nodeSelector: {}
+        tolerations: []
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchExpressions:
+                      - key: app.kubernetes.io/name
+                        operator: In
+                        values:
+                          - traefik
+                  topologyKey: kubernetes.io/hostname
+
+        # Priority class for critical workload
+        priorityClassName: "system-cluster-critical"
+
+        # Update strategy
+        updateStrategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 0
+            maxSurge: 1
+
+        # TLS Options
+        tlsOptions:
+          default:
+            minVersion: VersionTLS12
+            cipherSuites:
+              - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+              - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+              - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
