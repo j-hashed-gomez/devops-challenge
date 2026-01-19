@@ -28,7 +28,7 @@ resource "aws_s3_bucket" "terraform_state" {
   bucket = var.state_bucket_name
 
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 
   tags = {
@@ -103,7 +103,7 @@ resource "aws_dynamodb_table" "terraform_locks" {
   }
 
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 
   tags = {
