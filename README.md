@@ -45,8 +45,11 @@ cd devops-challenge
 #### 2. Setup Terraform Backend (Optional but Recommended)
 ```bash
 cd terraform/backend-setup
+
+# Initialize and deploy backend (S3 + DynamoDB for state locking)
 terraform init
 terraform apply -auto-approve
+
 cd ..
 ```
 
@@ -56,21 +59,21 @@ cd infrastructure
 
 # Copy and configure variables
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your values (region, cluster name, etc.)
+# Edit terraform.tfvars with your AWS profile and desired configuration
 
-# Initialize and deploy
+# Initialize and deploy infrastructure
 terraform init
 terraform apply -auto-approve
 
-# Configure kubectl
+# Configure kubectl to access the cluster
 aws eks update-kubeconfig --name devops-challenge-eks --region eu-west-1
+
+cd ../..
 ```
 
 #### 4. Install ArgoCD
 ```bash
-cd ../..
-
-# Install ArgoCD
+# Install ArgoCD in the cluster
 kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
@@ -85,13 +88,7 @@ echo
 kubectl port-forward svc/argocd-server -n argocd 8080:443 &
 ```
 
-#### 5. Deploy Cluster-Scoped Resources
-```bash
-# Apply cluster-scoped resources (ClusterSecretStore)
-kubectl apply -f k8s/cluster/
-```
-
-#### 6. Deploy Infrastructure Applications via ArgoCD
+#### 5. Deploy Infrastructure Applications via ArgoCD
 ```bash
 # Deploy Traefik Ingress Controller first
 kubectl apply -f argocd/applications/traefik.yaml
@@ -99,21 +96,35 @@ kubectl apply -f argocd/applications/traefik.yaml
 # Wait for Traefik to be ready
 kubectl wait --for=condition=available --timeout=300s deployment/traefik -n traefik
 
-# Deploy infrastructure applications (External Secrets, Autoscaler, Monitoring)
+# Deploy External Secrets Operator
 kubectl apply -f argocd/applications/external-secrets-operator.yaml
+
+# Wait for External Secrets to be ready
+kubectl wait --for=condition=available --timeout=600s deployment/external-secrets -n external-secrets
+
+# Deploy cluster-scoped resources (ClusterSecretStore - requires External Secrets)
+kubectl apply -f k8s/cluster/
+
+# Deploy remaining infrastructure applications
 kubectl apply -f argocd/applications/cluster-secrets.yaml
 kubectl apply -f argocd/applications/cluster-autoscaler.yaml
 kubectl apply -f argocd/applications/kube-prometheus-stack.yaml
 kubectl apply -f argocd/applications/loki-stack.yaml
+```
 
-# Wait for infrastructure to be ready
-kubectl wait --for=condition=available --timeout=600s deployment/external-secrets -n external-secrets-system
+#### 6. Create ArgoCD Project for Applications
+```bash
+# Create the tech-challenge project in ArgoCD
+kubectl apply -f argocd/projects/tech-challenge-project.yaml
 ```
 
 #### 7. Deploy Application
 ```bash
 # Deploy the tech-challenge application
 kubectl apply -f argocd/applications/tech-challenge-production.yaml
+
+# Wait for application to be healthy
+sleep 30
 
 # Verify deployment
 kubectl get applications -n argocd
@@ -140,6 +151,12 @@ kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3001:80
 # Get Grafana admin password
 kubectl get secret kube-prometheus-stack-grafana -n monitoring -o jsonpath="{.data.admin-password}" | base64 -d
 echo
+```
+
+**Note**: If pods remain in `Pending` state due to insufficient node capacity, the cluster autoscaler will automatically scale up the node group. You can verify this with:
+```bash
+kubectl get nodes
+kubectl describe pod <pending-pod-name> -n <namespace>
 ```
 
 ## 🔍 Quick Verification Commands
@@ -251,11 +268,13 @@ For detailed information about the implementation, architecture decisions, and d
 
 ## ⚠️ Important Notes
 
-1. **AWS Credentials**: Ensure your AWS credentials are configured with appropriate permissions for EKS, VPC, IAM, and Secrets Manager
+1. **AWS Credentials**: Ensure your AWS credentials are configured with appropriate permissions for EKS, VPC, IAM, and Secrets Manager. Configure your AWS profile in `terraform.tfvars` with the variable `aws_profile`
 2. **Region**: Default is `eu-west-1`, modify in `terraform.tfvars` if needed
 3. **Costs**: Running this infrastructure will incur AWS costs (~$150-200/month for the full stack)
 4. **Secrets**: External Secrets Operator requires AWS Secrets Manager to be properly configured
 5. **DNS**: For production, configure proper DNS records for ingress endpoints
+6. **Node Capacity**: t3.medium instances support up to 17 pods per node. The cluster autoscaler will automatically scale the node group when capacity is reached
+7. **Installation Order**: Follow the steps in order, especially deploying External Secrets Operator before ClusterSecretStore
 
 ## 🛠️ Technologies Used
 
@@ -285,12 +304,38 @@ For detailed information about the implementation, architecture decisions, and d
 ```bash
 kubectl get applications -n argocd
 kubectl describe application <app-name> -n argocd
+
+# Manually sync an application
+kubectl patch application <app-name> -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'
 ```
 
 ### Pods Not Starting
 ```bash
 kubectl describe pod <pod-name> -n <namespace>
 kubectl logs <pod-name> -n <namespace>
+
+# Check if pods are pending due to resource constraints
+kubectl get pods --all-namespaces --field-selector status.phase=Pending
+```
+
+### ClusterSecretStore CRD Not Found
+If you see an error about `ClusterSecretStore` CRD not found, ensure External Secrets Operator is deployed and running:
+```bash
+kubectl get pods -n external-secrets
+kubectl wait --for=condition=available --timeout=600s deployment/external-secrets -n external-secrets
+```
+
+### Insufficient Node Capacity
+If pods remain in `Pending` state with "Too many pods" error:
+```bash
+# Check node capacity
+kubectl describe nodes | grep -A 5 "Allocatable"
+
+# Verify cluster autoscaler is running
+kubectl get pods -n kube-system | grep cluster-autoscaler
+
+# Check autoscaler logs
+kubectl logs -n kube-system -l app.kubernetes.io/name=aws-cluster-autoscaler --tail=50
 ```
 
 ### Terraform State Lock

@@ -94,15 +94,14 @@ spec:
         ports:
           web:
             port: 80
-            expose: true
+            expose:
+              default: true
             exposedPort: 80
             protocol: TCP
-            redirectTo:
-              port: websecure
-              priority: 10
           websecure:
             port: 443
-            expose: true
+            expose:
+              default: true
             exposedPort: 443
             protocol: TCP
             http3:
@@ -111,7 +110,8 @@ spec:
               enabled: true
           metrics:
             port: 9100
-            expose: false
+            expose:
+              default: false
             protocol: TCP
 
         # Logs
