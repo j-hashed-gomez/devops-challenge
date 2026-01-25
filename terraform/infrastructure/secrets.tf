@@ -26,7 +26,41 @@ resource "aws_secretsmanager_secret_version" "mongodb_credentials" {
     username = "admin"
     password = random_password.mongodb_password.result
   })
-  
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+# Random password for Grafana admin
+resource "random_password" "grafana_admin_password" {
+  length  = 32
+  special = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
+# AWS Secrets Manager Secret for Grafana
+resource "aws_secretsmanager_secret" "grafana_credentials" {
+  name        = "observability/grafana/credentials"
+  description = "Grafana admin credentials for monitoring stack"
+
+  recovery_window_in_days = 7
+
+  tags = {
+    Name        = "grafana-admin-credentials"
+    Environment = "production"
+    ManagedBy   = "terraform"
+  }
+}
+
+# Secret Version with Grafana credentials
+resource "aws_secretsmanager_secret_version" "grafana_credentials" {
+  secret_id = aws_secretsmanager_secret.grafana_credentials.id
+  secret_string = jsonencode({
+    username = "admin"
+    password = random_password.grafana_admin_password.result
+  })
+
   lifecycle {
     ignore_changes = [secret_string]
   }

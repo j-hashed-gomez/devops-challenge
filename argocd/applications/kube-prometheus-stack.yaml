@@ -41,7 +41,10 @@ spec:
         # Grafana configuration with auto-provisioned dashboards
         grafana:
           enabled: true
-          adminPassword: admin
+          admin:
+            existingSecret: grafana-admin-secret
+            userKey: admin-user
+            passwordKey: admin-password
 
           sidecar:
             dashboards:

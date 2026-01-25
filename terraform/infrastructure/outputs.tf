@@ -78,3 +78,13 @@ output "mongodb_secret_name" {
   description = "Name of the MongoDB credentials secret in AWS Secrets Manager"
   value       = aws_secretsmanager_secret.mongodb_credentials.name
 }
+
+output "grafana_secret_arn" {
+  description = "ARN of the Grafana credentials secret in AWS Secrets Manager"
+  value       = aws_secretsmanager_secret.grafana_credentials.arn
+}
+
+output "grafana_secret_name" {
+  description = "Name of the Grafana credentials secret in AWS Secrets Manager"
+  value       = aws_secretsmanager_secret.grafana_credentials.name
+}
