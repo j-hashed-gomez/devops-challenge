@@ -113,6 +113,9 @@ kubectl apply -f argocd/applications/cluster-autoscaler.yaml
 kubectl apply -f argocd/applications/kube-prometheus-stack.yaml
 kubectl apply -f argocd/applications/loki-stack.yaml
 
+# Wait for observability namespace to be created by kube-prometheus-stack
+kubectl wait --for=jsonpath='{.status.phase}'=Active --timeout=60s namespace/observability
+
 # Deploy Grafana credentials from AWS Secrets Manager
 kubectl apply -f k8s/observability/grafana/external-secret.yaml
 

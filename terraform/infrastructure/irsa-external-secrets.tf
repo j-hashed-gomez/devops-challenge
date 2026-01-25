@@ -9,7 +9,8 @@ data "aws_iam_policy_document" "external_secrets" {
       "secretsmanager:ListSecrets"
     ]
     resources = [
-      "arn:aws:secretsmanager:eu-west-1:*:secret:tech-challenge/*"
+      "arn:aws:secretsmanager:eu-west-1:*:secret:tech-challenge/*",
+      "arn:aws:secretsmanager:eu-west-1:*:secret:observability/*"
     ]
   }
 
