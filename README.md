@@ -274,7 +274,7 @@ For detailed information about the implementation, architecture decisions, and d
 1. **AWS Credentials**: Ensure your AWS credentials are configured with appropriate permissions for EKS, VPC, IAM, and Secrets Manager. Configure your AWS profile in `terraform.tfvars` with the variable `aws_profile`
 2. **Region**: Default is `eu-west-1`, modify in `terraform.tfvars` if needed
 3. **Costs**: Running this infrastructure will incur AWS costs (~$150-200/month for the full stack)
-4. **Secrets**: External Secrets Operator requires AWS Secrets Manager to be properly configured
+4. **Secrets**: MongoDB credentials are automatically created in AWS Secrets Manager during Terraform deployment. The External Secrets Operator syncs these secrets to Kubernetes
 5. **DNS**: For production, configure proper DNS records for ingress endpoints
 6. **Node Capacity**: t3.medium instances support up to 17 pods per node. The cluster autoscaler will automatically scale the node group when capacity is reached
 7. **Installation Order**: Follow the steps in order, especially deploying External Secrets Operator before ClusterSecretStore

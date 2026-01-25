@@ -68,3 +68,13 @@ output "cluster_autoscaler_role_arn" {
   description = "IAM role ARN for Cluster Autoscaler"
   value       = aws_iam_role.cluster_autoscaler.arn
 }
+
+output "mongodb_secret_arn" {
+  description = "ARN of the MongoDB credentials secret in AWS Secrets Manager"
+  value       = aws_secretsmanager_secret.mongodb_credentials.arn
+}
+
+output "mongodb_secret_name" {
+  description = "Name of the MongoDB credentials secret in AWS Secrets Manager"
+  value       = aws_secretsmanager_secret.mongodb_credentials.name
+}
