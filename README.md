@@ -34,6 +34,57 @@ The solution implements a multi-layered architecture:
 - Helm 3.x
 - Git
 
+### Incorporating Corrections to dev and main (Optional)
+
+If you want to incorporate the production-ready corrections from the `feature/corrections` branch into `dev` and `main` branches:
+
+```bash
+# 1. Update feature/corrections branch
+git checkout feature/corrections
+git pull origin feature/corrections
+
+# 2. Merge to dev branch
+git checkout dev
+git pull origin dev
+git merge feature/corrections
+git push origin dev
+
+# 3. Merge to main branch
+git checkout main
+git pull origin main
+git merge feature/corrections
+git push origin main
+
+# 4. Optional: Clean up feature branch after merge
+git branch -d feature/corrections
+git push origin --delete feature/corrections
+```
+
+**Alternative - Using a script:**
+
+Create a file `merge-corrections.sh`:
+```bash
+#!/bin/bash
+echo "Merging feature/corrections to dev and main..."
+
+git checkout feature/corrections && git pull origin feature/corrections
+git checkout dev && git pull origin dev && git merge feature/corrections && git push origin dev
+git checkout main && git pull origin main && git merge feature/corrections && git push origin main
+
+echo "Cleaning up feature branch..."
+git branch -d feature/corrections
+git push origin --delete feature/corrections
+
+echo "Done! Merged to both dev and main."
+git checkout main
+```
+
+Then execute:
+```bash
+chmod +x merge-corrections.sh
+./merge-corrections.sh
+```
+
 ### Installation Steps
 
 #### 1. Clone the Repository
