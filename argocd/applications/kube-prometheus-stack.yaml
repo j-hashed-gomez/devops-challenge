@@ -67,20 +67,13 @@ spec:
             size: 10Gi
 
           # Datasources configuration
-          datasources:
-            datasources.yaml:
-              apiVersion: 1
-              datasources:
-              - name: Prometheus
-                type: prometheus
-                url: http://kube-prometheus-stack-prometheus.observability:9090
-                access: proxy
-                isDefault: true
-              - name: Loki
-                type: loki
-                url: http://loki.observability:3100
-                access: proxy
-                isDefault: false
+          # Note: Prometheus datasource is automatically configured by the helm chart
+          additionalDataSources:
+          - name: Loki
+            type: loki
+            url: http://loki.observability:3100
+            access: proxy
+            isDefault: false
 
           # Auto-provision dashboards
           dashboardProviders:

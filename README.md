@@ -148,10 +148,10 @@ kubectl port-forward svc/tech-challenge-app -n tech-challenge 3000:80
 #### 9. Access Monitoring (Optional)
 ```bash
 # Grafana
-kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3001:80
+kubectl port-forward svc/kube-prometheus-stack-grafana -n observability 3001:80
 
 # Get Grafana admin password
-kubectl get secret kube-prometheus-stack-grafana -n monitoring -o jsonpath="{.data.admin-password}" | base64 -d
+kubectl get secret kube-prometheus-stack-grafana -n observability -o jsonpath="{.data.admin-password}" | base64 -d
 echo
 ```
 
@@ -181,7 +181,7 @@ kubectl get pods -n tech-challenge
 kubectl get ingress -n tech-challenge
 
 # Check monitoring stack
-kubectl get pods -n monitoring
+kubectl get pods -n observability
 
 # Verify autoscaling
 kubectl get hpa -n tech-challenge
