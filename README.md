@@ -47,8 +47,9 @@ cd devops-challenge
 cd terraform/backend-setup
 
 # Initialize and deploy backend (S3 + DynamoDB for state locking)
+# Replace 'your-aws-profile' with your AWS CLI profile name
 terraform init
-terraform apply -auto-approve
+AWS_PROFILE=your-aws-profile terraform apply -auto-approve
 
 cd ..
 ```
@@ -62,11 +63,12 @@ cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars with your AWS profile and desired configuration
 
 # Initialize and deploy infrastructure
+# Replace 'your-aws-profile' with your AWS CLI profile name
 terraform init
-terraform apply -auto-approve
+AWS_PROFILE=your-aws-profile terraform apply -auto-approve
 
 # Configure kubectl to access the cluster
-aws eks update-kubeconfig --name devops-challenge-eks --region eu-west-1
+AWS_PROFILE=your-aws-profile aws eks update-kubeconfig --name devops-challenge-eks --region eu-west-1
 
 cd ../..
 ```
@@ -192,12 +194,13 @@ kubectl get hpa -n tech-challenge
 kubectl delete applications -n argocd --all
 
 # Destroy infrastructure
+# Replace 'your-aws-profile' with your AWS CLI profile name
 cd terraform/infrastructure
-terraform destroy -auto-approve
+AWS_PROFILE=your-aws-profile terraform destroy -auto-approve
 
 # Destroy backend (if created)
 cd ../backend-setup
-terraform destroy -auto-approve
+AWS_PROFILE=your-aws-profile terraform destroy -auto-approve
 ```
 
 ## 🔄 CI/CD Pipeline
