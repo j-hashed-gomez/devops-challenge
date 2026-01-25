@@ -98,9 +98,8 @@ cd devops-challenge
 cd terraform/backend-setup
 
 # Initialize and deploy backend (S3 + DynamoDB for state locking)
-# Replace 'your-aws-profile' with your AWS CLI profile name
 terraform init
-AWS_PROFILE=your-aws-profile terraform apply -auto-approve
+AWS_PROFILE=personal-aws terraform apply -auto-approve
 
 cd ..
 ```
@@ -114,12 +113,11 @@ cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars with your AWS profile and desired configuration
 
 # Initialize and deploy infrastructure
-# Replace 'your-aws-profile' with your AWS CLI profile name
 terraform init
-AWS_PROFILE=your-aws-profile terraform apply -auto-approve
+AWS_PROFILE=personal-aws terraform apply -auto-approve
 
 # Configure kubectl to access the cluster
-AWS_PROFILE=your-aws-profile aws eks update-kubeconfig --name devops-challenge-eks --region eu-west-1
+AWS_PROFILE=personal-aws aws eks update-kubeconfig --name devops-challenge-eks --region eu-west-1
 
 cd ../..
 ```
@@ -143,7 +141,10 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443 &
 
 #### 5. Deploy Infrastructure Applications via ArgoCD
 ```bash
-# Deploy Traefik Ingress Controller first
+# Deploy cluster-scoped resources first (StorageClass gp3)
+kubectl apply -f k8s/cluster/storageclass-gp3.yaml
+
+# Deploy Traefik Ingress Controller
 kubectl apply -f argocd/applications/traefik.yaml
 
 # Wait for Traefik to be ready
@@ -156,7 +157,7 @@ kubectl apply -f argocd/applications/external-secrets-operator.yaml
 kubectl wait --for=condition=available --timeout=600s deployment/external-secrets -n external-secrets
 
 # Deploy cluster-scoped resources (ClusterSecretStore - requires External Secrets)
-kubectl apply -f k8s/cluster/
+kubectl apply -f k8s/cluster/cluster-secretstore.yaml
 
 # Deploy remaining infrastructure applications
 kubectl apply -f argocd/applications/cluster-secrets.yaml
@@ -218,7 +219,7 @@ kubectl get secret grafana-admin-secret -n observability -o jsonpath="{.data.adm
 echo
 
 # Alternative: Get password directly from AWS Secrets Manager
-AWS_PROFILE=your-aws-profile aws secretsmanager get-secret-value \
+AWS_PROFILE=personal-aws aws secretsmanager get-secret-value \
   --secret-id observability/grafana/credentials \
   --query 'SecretString' \
   --output text | jq -r '.password'

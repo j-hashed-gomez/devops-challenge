@@ -2,7 +2,7 @@
 resource "random_password" "mongodb_password" {
   length  = 32
   special = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
+  override_special = "-_"
 }
 
 # AWS Secrets Manager Secret
@@ -36,7 +36,7 @@ resource "aws_secretsmanager_secret_version" "mongodb_credentials" {
 resource "random_password" "grafana_admin_password" {
   length  = 32
   special = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
+  override_special = "-_"
 }
 
 # AWS Secrets Manager Secret for Grafana
